@@ -66,6 +66,7 @@ export function SectorSelector({
           return (
             <button
               key={sector.id}
+              type="button"
               onClick={() => toggleSector(sector.id)}
               className={`inline-flex items-center px-3 py-1 rounded-full text-sm transition-colors ${
                 isSelected
@@ -91,6 +92,9 @@ export function SectorSelector({
         return (
           <button
             key={sector.id}
+            // Without this the button defaults to type="submit" and picking a
+            // sector immediately submits the create-project form.
+            type="button"
             onClick={() => toggleSector(sector.id)}
             className={`flex items-center p-3 border-2 rounded-lg transition-colors ${
               isSelected

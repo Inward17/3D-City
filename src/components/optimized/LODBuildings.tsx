@@ -20,15 +20,15 @@ function LODBuilding({ location }: { location: Location }) {
   const dimensions = useMemo(() => {
     switch (location.type) {
       case 'Building':
-        return { width: 2, height: 4, depth: 2 };
+        return { width: 20, height: 40, depth: 20 };
       case 'Hospital':
-        return { width: 3, height: 3, depth: 3 };
+        return { width: 30, height: 30, depth: 30 };
       case 'School':
-        return { width: 3, height: 2, depth: 3 };
+        return { width: 30, height: 20, depth: 30 };
       case 'Hotel':
-        return { width: 2, height: 5, depth: 2 };
+        return { width: 20, height: 50, depth: 20 };
       default:
-        return { width: 2, height: 2, depth: 2 };
+        return { width: 20, height: 20, depth: 20 };
     }
   }, [location.type]);
 
@@ -41,6 +41,9 @@ function LODBuilding({ location }: { location: Location }) {
   useEffect(() => {
     if (!groupRef.current) return;
 
+    // Captured now so cleanup detaches from the same group this effect added to,
+    // not whatever groupRef points at by the time cleanup runs.
+    const group = groupRef.current;
     const lod = new THREE.LOD();
     lodRef.current = lod;
 
@@ -74,12 +77,12 @@ function LODBuilding({ location }: { location: Location }) {
       new THREE.MeshBasicMaterial({ color: buildingColor })
     );
     lowDetailMesh.position.y = dimensions.height / 2;
-    lod.addLevel(lowDetailMesh, 20);
+    lod.addLevel(lowDetailMesh, 200);
 
-    groupRef.current.add(lod);
+    group.add(lod);
 
     return () => {
-      groupRef.current?.remove(lod);
+      group.remove(lod);
       highDetailGeometry.dispose();
       lowDetailGeometry.dispose();
     };
@@ -94,10 +97,8 @@ function LODBuilding({ location }: { location: Location }) {
         groupRef.current.position.y = 0;
       }
 
-      // Update LOD based on distance from camera
-      const distance = camera.position.distanceTo(
-        new THREE.Vector3(...location.position)
-      );
+      // LOD.update() measures the camera distance itself; doing it here as well
+      // just allocated a Vector3 per building per frame.
       lodRef.current.update(camera);
     }
   });
@@ -119,8 +120,8 @@ function LODBuilding({ location }: { location: Location }) {
     >
       {/* Selection highlight - only render when selected */}
       {isSelected && (
-        <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[dimensions.width + 0.5, dimensions.width + 0.8, 32]} />
+        <mesh position={[0, 1.0, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[dimensions.width + 5, dimensions.width + 8, 32]} />
           <meshBasicMaterial color="#3b82f6" transparent opacity={0.6} />
         </mesh>
       )}
@@ -131,7 +132,7 @@ function LODBuilding({ location }: { location: Location }) {
 export function LODBuildings({ locations }: LODBuildingsProps) {
   const buildings = useMemo(() =>
     locations.filter(loc => loc.type !== 'Park'),
-  [locations]);
+    [locations]);
 
   return (
     <>

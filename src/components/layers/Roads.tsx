@@ -1,196 +1,149 @@
-import { useMemo } from 'react';
-import { Line, Circle } from '@react-three/drei';
+import { useMemo, useEffect } from 'react';
 import { useCityStore } from '../../store/cityStore';
-import { Vector3, CatmullRomCurve3 } from 'three';
+import { BufferGeometry } from 'three';
 import { Location, Road } from '../../types/city';
+import { createRoadRibbon, createCentreLine } from '../../utils/roadGeometry';
+import { routeRoad } from '../../utils/roadRouting';
+import { ROAD_WIDTH, ROAD_SURFACE_Y, ROAD_MARKING_Y, PAVEMENT_WIDTH } from '../../utils/scale';
 
 interface RoadsLayerProps {
   locations: Location[];
   roads: Road[];
 }
 
-export function RoadsLayer({ locations, roads }: RoadsLayerProps) {
+function RoadMesh({
+  road,
+  from,
+  to,
+  obstacles
+}: {
+  road: Road;
+  from: Location;
+  to: Location;
+  obstacles: Location[];
+}) {
   const { weather } = useCityStore();
 
-  // Generate spline points for roads
-  const generateSplinePoints = (
-    start: [number, number, number],
-    end: [number, number, number],
-    type: 'main' | 'secondary' | 'residential'
-  ) => {
-    const points: Vector3[] = [];
-    const segments = type === 'main' ? 12 : type === 'secondary' ? 8 : 6;
-    
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const x = start[0] + (end[0] - start[0]) * t;
-      const currentZ = start[2] + (end[2] - start[2]) * t;
-      
-      let y = 0.1; // Slight elevation above terrain
-      
-      // Add natural variation for non-main roads
-      const variation = type === 'residential' ? 0.2 : type === 'secondary' ? 0.1 : 0;
-      const offsetX = (Math.random() - 0.5) * variation;
-      const offsetZ = (Math.random() - 0.5) * variation;
-      
-      // Calculate midpoint influence for more natural curves
-      const midpointInfluence = Math.sin(t * Math.PI) * (type === 'residential' ? 0.8 : 0.4);
-      
-      // Add perpendicular offset for more natural curves
-      const dx = end[0] - start[0];
-      const dz = end[2] - start[2];
-      const length = Math.sqrt(dx * dx + dz * dz);
-      const perpX = -dz / length * midpointInfluence;
-      const perpZ = dx / length * midpointInfluence;
-      
-      points.push(new Vector3(
-        x + offsetX + perpX,
-        y,
-        currentZ + offsetZ + perpZ
-      ));
+  const { surface, markings, pavement } = useMemo(() => {
+    /*
+      The centre-line is routed rather than drawn straight from centre to
+      centre: it starts at each building's edge and bends around anything in
+      between. The decorative per-road "wobble" that used to live here was
+      removed — it made roads meander for no reason and, worse, meant the
+      ribbons and the vehicle paths described different curves.
+    */
+    const smooth = routeRoad(from, to, road.type, { obstacles });
+    if (smooth.length < 2) {
+      return { surface: null, markings: null, pavement: null };
     }
-    
-    return points;
-  };
 
-  // Determine road surface properties based on weather
-  const getRoadSurfaceProps = (roadType: 'main' | 'secondary' | 'residential') => {
-    const baseColors = {
-      main: '#0f172a',
-      secondary: '#334155',
-      residential: '#64748b'
+    const width = ROAD_WIDTH[road.type];
+
+    return {
+      surface: createRoadRibbon(smooth, width, ROAD_SURFACE_Y),
+      // Only wide roads get a centre line, as in reality.
+      markings: road.type === 'residential'
+        ? null
+        : createCentreLine(smooth, ROAD_MARKING_Y),
+      // Footway either side, drawn as one wider strip beneath the carriageway.
+      pavement: createRoadRibbon(smooth, width + PAVEMENT_WIDTH * 2, ROAD_SURFACE_Y - 0.03)
     };
-    
-    if (weather === 'rain') {
-      return {
-        color: baseColors[roadType],
-        opacity: 0.9
-      };
-    } else if (weather === 'snow') {
-      return {
-        color: roadType === 'main' ? '#334155' : '#64748b',
-        opacity: 0.8
-      };
-    } else {
-      return {
-        color: baseColors[roadType],
-        opacity: 1.0
-      };
-    }
-  };
+  }, [from, to, road.type, obstacles]);
 
-  // Enhanced roundabout component
-  const Roundabout = ({ position, size = 2.5 }) => {
-    return (
-      <group position={[position[0], position[1], position[2]]}>
-        {/* Main roundabout circle */}
-        <Circle args={[size]} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
-          <meshStandardMaterial 
-            color="#1e293b"
-            roughness={0.6}
-            metalness={0.4}
-          />
-        </Circle>
-        
-        {/* Inner traffic circle */}
-        <Circle args={[size - 0.8]} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
-          <meshStandardMaterial 
-            color="#475569"
+  // Generated geometry isn't garbage collected with the component.
+  useEffect(() => {
+    return () => {
+      surface?.dispose();
+      markings?.dispose();
+      pavement?.dispose();
+    };
+  }, [surface, markings, pavement]);
+
+  if (!surface) return null;
+
+  const tarmac = weather === 'snow' ? '#5b6472' : '#2b3038';
+  const kerb = weather === 'snow' ? '#c9d3dd' : '#6b7280';
+
+  return (
+    <group>
+      <mesh geometry={pavement as BufferGeometry} receiveShadow>
+        <meshStandardMaterial color={kerb} roughness={0.95} metalness={0} />
+      </mesh>
+
+      <mesh geometry={surface} receiveShadow>
+        <meshStandardMaterial
+          color={tarmac}
+          roughness={weather === 'rain' ? 0.25 : 0.85}
+          metalness={weather === 'rain' ? 0.5 : 0.05}
+        />
+      </mesh>
+
+      {markings && (
+        <mesh geometry={markings}>
+          <meshStandardMaterial
+            color="#e8e4d9"
             roughness={0.7}
-            metalness={0.3}
+            emissive="#3a3730"
+            emissiveIntensity={0.2}
           />
-        </Circle>
-        
-        {/* Center island with landscaping */}
-        <group position={[0, 0.07, 0]}>
-          <Circle args={[size - 1.6]} rotation={[-Math.PI / 2, 0, 0]}>
-            <meshStandardMaterial color="#4ade80" />
-          </Circle>
-        </group>
-      </group>
-    );
-  };
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+/** Junction disc where several main roads meet. */
+function Junction({ position, radius }: { position: [number, number, number]; radius: number }) {
+  return (
+    <group position={[position[0], 0, position[2]]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, ROAD_SURFACE_Y + 0.01, 0]} receiveShadow>
+        <circleGeometry args={[radius, 32]} />
+        <meshStandardMaterial color="#2b3038" roughness={0.85} />
+      </mesh>
+      {/* Central island, sized so a bus can still track around it. */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, ROAD_SURFACE_Y + 0.06, 0]}>
+        <circleGeometry args={[radius * 0.35, 24]} />
+        <meshStandardMaterial color="#3f8f52" roughness={0.95} />
+      </mesh>
+    </group>
+  );
+}
+
+export function RoadsLayer({ locations, roads }: RoadsLayerProps) {
+  const byId = useMemo(
+    () => new Map(locations.map(l => [l.id, l])),
+    [locations]
+  );
 
   return (
     <>
-      {/* Road surfaces */}
-      {roads.map((road) => {
-        const fromLocation = locations.find(loc => loc.id === road.from);
-        const toLocation = locations.find(loc => loc.id === road.to);
-
-        if (!fromLocation || !toLocation) return null;
-
-        const splinePoints = generateSplinePoints(
-          fromLocation.position,
-          toLocation.position,
-          road.type
-        );
-
-        const curve = new CatmullRomCurve3(splinePoints);
-        const curvePoints = curve.getPoints(50);
-
-        // Road width based on type
-        const width = road.type === 'main' ? 2.5 : 
-                     road.type === 'secondary' ? 2 : 1.5;
-                     
-        const surfaceProps = getRoadSurfaceProps(road.type);
-
+      {roads.map(road => {
+        const from = byId.get(road.from);
+        const to = byId.get(road.to);
+        if (!from || !to) return null;
         return (
-          <group key={`road-${road.id}`}>
-            {/* Road surface */}
-            <Line
-              points={curvePoints}
-              color={surfaceProps.color}
-              lineWidth={width}
-              position={[0, 0.05, 0]}
-            />
-            
-            {/* Road markings */}
-            {road.type === 'main' && (
-              <>
-                {/* Center line */}
-                <Line
-                  points={curvePoints}
-                  color="#ffffff"
-                  lineWidth={0.2}
-                  dashed
-                  dashScale={10}
-                  dashSize={2}
-                  gapSize={1}
-                  position={[0, 0.06, 0]}
-                />
-              </>
-            )}
-            
-            {/* Road shadows */}
-            <Line
-              points={curvePoints}
-              color="#000000"
-              lineWidth={width + 0.3}
-              transparent
-              opacity={0.2}
-              position={[0, 0.04, 0]}
-            />
-          </group>
+          <RoadMesh
+            key={`road-${road.id}`}
+            road={road}
+            from={from}
+            to={to}
+            obstacles={locations}
+          />
         );
       })}
 
-      {/* Roundabouts at major intersections */}
-      {locations.map((location) => {
-        const connectedMainRoads = roads.filter(
-          road => (road.from === location.id || road.to === location.id) && road.type === 'main'
+      {locations.map(location => {
+        const mainRoads = roads.filter(
+          r => (r.from === location.id || r.to === location.id) && r.type === 'main'
         );
-        
-        if (connectedMainRoads.length >= 2) {
-          return (
-            <Roundabout
-              key={`roundabout-${location.id}`}
-              position={location.position}
-              size={3}
-            />
-          );
-        }
-        return null;
+        if (mainRoads.length < 2) return null;
+        return (
+          <Junction
+            key={`junction-${location.id}`}
+            position={location.position}
+            radius={ROAD_WIDTH.main * 0.9}
+          />
+        );
       })}
     </>
   );

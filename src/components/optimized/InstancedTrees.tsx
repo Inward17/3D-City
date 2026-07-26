@@ -1,7 +1,7 @@
 import { useRef, useMemo, useEffect } from 'react';
-import { useFrame } from '@react-three/fiber';
-import { useCityStore } from '../../store/cityStore';
 import { Location } from '../../types/city';
+import { hashUnit } from '../../utils/buildingDimensions';
+import { PARK_TREE } from '../../utils/scale';
 import * as THREE from 'three';
 
 interface InstancedTreesProps {
@@ -13,12 +13,28 @@ interface TreeInstance {
   scale: THREE.Vector3;
 }
 
+const TREES_PER_PARK = 14;
+
+/**
+ * Ring of trees around a park.
+ *
+ * Layout is derived from the park id rather than Math.random(), so the trees
+ * stay put; previously any change that produced a new locations array
+ * reshuffled every tree in the city.
+ */
 function generateTreeInstances(parkLocation: Location): TreeInstance[] {
   const trees: TreeInstance[] = [];
-  for (let i = 0; i < 8; i++) {
-    const angle = (i / 8) * Math.PI * 2;
-    const radius = 1 + Math.random() * 1.5;
-    const scale = 0.8 + Math.random() * 0.4;
+  const seed = hashUnit(parkLocation.id);
+
+  for (let i = 0; i < TREES_PER_PARK; i++) {
+    // Two decorrelated pseudo-random values per tree, stable for this park.
+    const r1 = (Math.sin((seed + 1) * 91.7 + i * 12.9898) + 1) / 2;
+    const r2 = (Math.sin((seed + 1) * 47.3 + i * 78.233) + 1) / 2;
+
+    const angle = (i / TREES_PER_PARK) * Math.PI * 2 + r1 * 0.4;
+    const radius = 14 + r1 * 14;
+    // Uniform scale around a real tree size; 0.85x - 1.25x of the reference.
+    const scale = 0.85 + r2 * 0.4;
 
     trees.push({
       position: new THREE.Vector3(
@@ -46,18 +62,33 @@ function ParkTrees({ location }: { location: Location }) {
     const tempQuaternion = new THREE.Quaternion();
     const tempScale = new THREE.Vector3();
 
+    /*
+      Trunk and canopy are placed from the real tree dimensions in scale.ts and
+      scaled together, so the canopy always sits on top of its own trunk.
+
+      The old maths scaled the two parts by different factors (0.1x and 0.5x)
+      and offset them by different multiples of the same number, which produced
+      a 0.9 m trunk hovering at 4.5 m with its canopy floating separately at
+      10.8 m — two disconnected objects rather than a tree.
+    */
     trees.forEach((tree, i) => {
-      // Trunk
+      const s = tree.scale.x;
+
+      // Trunk: geometry is a unit-height cylinder, so scale carries the height.
       tempPosition.copy(tree.position);
-      tempPosition.y += 0.5 * tree.scale.y;
-      tempScale.setScalar(0.1 * tree.scale.x);
+      tempPosition.y += (PARK_TREE.trunkHeight * s) / 2;
+      tempScale.set(
+        PARK_TREE.trunkRadius * 2 * s,
+        PARK_TREE.trunkHeight * s,
+        PARK_TREE.trunkRadius * 2 * s
+      );
       tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
       trunkRef.current!.setMatrixAt(i, tempMatrix);
 
-      // Foliage
+      // Canopy: centred a little above the top of the trunk so they overlap.
       tempPosition.copy(tree.position);
-      tempPosition.y += 1.2 * tree.scale.y;
-      tempScale.setScalar(0.5 * tree.scale.x);
+      tempPosition.y += (PARK_TREE.trunkHeight + PARK_TREE.canopyRadius * 0.7) * s;
+      tempScale.setScalar(PARK_TREE.canopyRadius * s);
       tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
       foliageRef.current!.setMatrixAt(i, tempMatrix);
     });
@@ -68,29 +99,25 @@ function ParkTrees({ location }: { location: Location }) {
 
   return (
     <group position={location.position as [number, number, number]}>
-      {/* Tree trunks */}
-      <instancedMesh ref={trunkRef} args={[undefined, undefined, trees.length]}>
-        <cylinderGeometry args={[0.1, 0.1, 1]} />
-        <meshStandardMaterial color="#8b4513" />
+      {/* Trunk: unit cylinder (radius 0.5, height 1) so the instance scale maps
+          directly to real metres. */}
+      <instancedMesh ref={trunkRef} args={[undefined, undefined, trees.length]} castShadow>
+        <cylinderGeometry args={[0.5, 0.5, 1, 8]} />
+        <meshStandardMaterial color="#5a4632" roughness={0.95} />
       </instancedMesh>
 
-      {/* Tree foliage */}
-      <instancedMesh ref={foliageRef} args={[undefined, undefined, trees.length]}>
-        <sphereGeometry args={[0.5, 16, 16]} />
-        <meshStandardMaterial color="#22c55e" />
+      {/* Canopy: unit sphere (radius 1), scaled to the canopy radius. */}
+      <instancedMesh ref={foliageRef} args={[undefined, undefined, trees.length]} castShadow>
+        <sphereGeometry args={[1, 12, 10]} />
+        <meshStandardMaterial color="#3f8f52" roughness={0.9} />
       </instancedMesh>
 
-      {/* Park ground */}
-      <mesh position={[0, 0.05, 0]} receiveShadow>
-        <cylinderGeometry args={[3, 3, 0.1, 32]} />
-        <meshStandardMaterial color="#4ade80" />
-      </mesh>
-
-      {/* Pathways */}
-      <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[1, 1.2, 32]} />
-        <meshStandardMaterial color="#d6d3d1" />
-      </mesh>
+      {/*
+        Trees only. This component used to draw its own park ground disc and
+        path ring as well, which sat at the same height as the lawn rendered by
+        the Park component in layers/Buildings — two overlapping discs that
+        z-fought. The Park component owns the ground.
+      */}
     </group>
   );
 }
@@ -98,7 +125,7 @@ function ParkTrees({ location }: { location: Location }) {
 export function InstancedTrees({ locations }: InstancedTreesProps) {
   const parks = useMemo(() =>
     locations.filter(loc => loc.type === 'Park'),
-  [locations]);
+    [locations]);
 
   return (
     <>

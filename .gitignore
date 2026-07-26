@@ -7,10 +7,27 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+.pnp
+.pnp.js
+
+# Build output
 dist
 dist-ssr
+build
 *.local
+
+# Environment files — NEVER commit real secrets
+.env
+.env.local
+.env.*.local
+# Commit this template instead:
+# .env.example is safe to commit
+
+# Vite cache
+.vite/
+vite.config.ts.timestamp-*
 
 # Editor directories and files
 .vscode/*
@@ -22,3 +39,16 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Test coverage
+coverage
+.nyc_output
+
+# TypeScript cache
+*.tsbuildinfo
+
+# OS files
+Thumbs.db
+
+# Bolt metadata (auto-generated)
+.bolt/

@@ -1,8 +1,9 @@
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useCityStore } from '../../store/cityStore';
+import type { CameraPreset } from '../../store/cityStore';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { OrbitControls } from 'three-stdlib';
 
 interface CameraTransition {
   from: {
@@ -42,17 +43,17 @@ class CameraStateManager {
     this.transitions.push(transition);
   }
 
-  update(camera: THREE.Camera, controls: any, deltaTime: number) {
+  update(camera: THREE.Camera, controls: OrbitControls) {
     if (!this.isTransitioning && this.transitions.length > 0) {
       this.startNextTransition(camera, controls);
     }
 
     if (this.isTransitioning && this.currentTransition) {
-      this.updateCurrentTransition(camera, controls, deltaTime);
+      this.updateCurrentTransition(camera, controls);
     }
   }
 
-  private startNextTransition(camera: THREE.Camera, controls: any) {
+  private startNextTransition(camera: THREE.Camera, controls: OrbitControls) {
     this.currentTransition = this.transitions.shift()!;
     this.transitionStartTime = performance.now();
     this.isTransitioning = true;
@@ -61,11 +62,11 @@ class CameraStateManager {
     this.currentTransition.from = {
       position: camera.position.clone(),
       target: controls.target.clone(),
-      fov: camera.fov
+      fov: (camera as THREE.PerspectiveCamera).fov || 75
     };
   }
 
-  private updateCurrentTransition(camera: THREE.Camera, controls: any, deltaTime: number) {
+  private updateCurrentTransition(camera: THREE.Camera, controls: OrbitControls) {
     if (!this.currentTransition) return;
 
     const elapsed = performance.now() - this.transitionStartTime;
@@ -87,12 +88,14 @@ class CameraStateManager {
     );
 
     // Interpolate FOV
-    camera.fov = THREE.MathUtils.lerp(
-      this.currentTransition.from.fov,
-      this.currentTransition.to.fov,
-      easedProgress
-    );
-    camera.updateProjectionMatrix();
+    if ((camera as THREE.PerspectiveCamera).fov !== undefined) {
+      (camera as THREE.PerspectiveCamera).fov = THREE.MathUtils.lerp(
+        this.currentTransition.from.fov,
+        this.currentTransition.to.fov,
+        easedProgress
+      );
+      (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
+    }
 
     // Check if transition is complete
     if (progress >= 1) {
@@ -117,78 +120,106 @@ class CameraStateManager {
 
 export function SmoothCameraControls() {
   const { camera, gl } = useThree();
-  const { cameraState, setCameraRefs } = useCityStore();
-  const controlsRef = useRef<any>();
-  const stateManagerRef = useRef<CameraStateManager>();
+  const {
+    setCameraRefs,
+    registerCameraController,
+    setCameraTransitioning,
+    isPlacingBuilding,
+    isPlacingRoute
+  } = useCityStore();
 
-  // Initialize camera state manager
-  useEffect(() => {
-    stateManagerRef.current = new CameraStateManager();
-  }, []);
+  // Created eagerly rather than in an effect: useFrame can fire before effects
+  // flush, and the registered controller must be usable immediately.
+  const stateManagerRef = useRef<CameraStateManager>(new CameraStateManager());
 
   // Create enhanced controls
   const controls = useMemo(() => {
     if (!camera || !gl.domElement) return null;
 
     const controls = new OrbitControls(camera, gl.domElement);
-    
+
     // Enhanced control settings
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.screenSpacePanning = false;
-    controls.minDistance = 5;
-    controls.maxDistance = 200;
-    controls.maxPolarAngle = Math.PI / 2.1;
-    
+    // The scene's initial camera sits ~35 units out, inside the old minDistance
+    // of 50, so OrbitControls shoved it back on the first frame. It also made
+    // the walkthrough preset (distance ~10) unreachable.
+    controls.minDistance = 8;
+    controls.maxDistance = 1600;
+    // Stop just short of horizontal so the camera can't drop under the ground.
+    controls.maxPolarAngle = Math.PI / 2 - 0.05;
+
     // Smooth zoom
     controls.zoomSpeed = 0.5;
     controls.rotateSpeed = 0.5;
     controls.panSpeed = 0.8;
-    
-    // Auto-rotate for cinematic effect (can be toggled)
+
+    // Enable auto-rotate for cinematic effect (can be toggled)
     controls.autoRotate = false;
     controls.autoRotateSpeed = 0.5;
 
     return controls;
   }, [camera, gl.domElement]);
 
+  // Update placement restrictions dynamically
+  useEffect(() => {
+    if (controls) {
+      const isPlacingAnything = isPlacingBuilding || isPlacingRoute;
+      controls.enableRotate = !isPlacingAnything;
+
+      // While placing, `enableRotate = false` above already neutralises the
+      // left button, so left-click reaches the ground plane as a placement
+      // click. (The old code set `LEFT: 0` intending to unbind it, but
+      // THREE.MOUSE.ROTATE *is* 0, so it changed nothing.) Right-drag stays
+      // mapped to pan so the user can still navigate mid-placement.
+      controls.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN
+      };
+    }
+  }, [controls, isPlacingBuilding, isPlacingRoute]);
+
   // Register controls with store
   useEffect(() => {
     if (camera && controls) {
-      controlsRef.current = controls;
       setCameraRefs(camera, controls);
     }
   }, [camera, controls, setCameraRefs]);
 
   // Enhanced preset animations
-  const animateToPreset = (preset: string) => {
+  const animateToPreset = useCallback((preset: CameraPreset) => {
     if (!stateManagerRef.current || !controls) return;
 
-    const presets = {
+    const presets: Record<CameraPreset, { position: THREE.Vector3, target: THREE.Vector3, fov: number }> = {
+      // Distances are in the same units as the city data, which spans roughly
+      // ±250. The old presets were built for a ~30-unit scene and left the
+      // camera buried inside the first city block.
       isometric: {
-        position: new THREE.Vector3(30, 30, 30),
-        target: new THREE.Vector3(0, 0, 0),
-        fov: 50
-      },
-      aerial: {
-        position: new THREE.Vector3(0, 80, 0),
-        target: new THREE.Vector3(0, 0, 0),
-        fov: 60
-      },
-      walkthrough: {
-        position: new THREE.Vector3(0, 2, 10),
-        target: new THREE.Vector3(0, 2, 0),
-        fov: 75
-      },
-      cinematic: {
-        position: new THREE.Vector3(50, 25, 50),
+        position: new THREE.Vector3(320, 300, 320),
         target: new THREE.Vector3(0, 0, 0),
         fov: 45
       },
-      free: {
-        position: new THREE.Vector3(20, 20, 20),
+      aerial: {
+        position: new THREE.Vector3(0, 620, 1),
         target: new THREE.Vector3(0, 0, 0),
-        fov: 75
+        fov: 55
+      },
+      walkthrough: {
+        position: new THREE.Vector3(60, 12, 90),
+        target: new THREE.Vector3(0, 12, 0),
+        fov: 70
+      },
+      cinematic: {
+        position: new THREE.Vector3(420, 130, 420),
+        target: new THREE.Vector3(0, 30, 0),
+        fov: 38
+      },
+      free: {
+        position: new THREE.Vector3(260, 200, 260),
+        target: new THREE.Vector3(0, 0, 0),
+        fov: 55
       }
     };
 
@@ -199,7 +230,7 @@ export function SmoothCameraControls() {
       from: {
         position: camera.position.clone(),
         target: controls.target.clone(),
-        fov: camera.fov
+        fov: (camera as THREE.PerspectiveCamera).fov || 75
       },
       to: targetPreset,
       duration: 2.5, // Longer, smoother transitions
@@ -215,10 +246,10 @@ export function SmoothCameraControls() {
     };
 
     stateManagerRef.current.addTransition(transition);
-  };
+  }, [camera, controls]);
 
   // Smooth fly-to-location
-  const flyToLocation = (position: [number, number, number], offset: [number, number, number] = [10, 10, 10]) => {
+  const flyToLocation = useCallback((position: [number, number, number], offset: [number, number, number] = [10, 10, 10]) => {
     if (!stateManagerRef.current || !controls) return;
 
     const targetPosition = new THREE.Vector3(
@@ -232,7 +263,7 @@ export function SmoothCameraControls() {
       from: {
         position: camera.position.clone(),
         target: controls.target.clone(),
-        fov: camera.fov
+        fov: (camera as THREE.PerspectiveCamera).fov || 75
       },
       to: {
         position: targetPosition,
@@ -244,28 +275,25 @@ export function SmoothCameraControls() {
     };
 
     stateManagerRef.current.addTransition(transition);
-  };
+  }, [camera, controls]);
 
-  // Update controls and state manager
-  useFrame((state, delta) => {
+  useFrame(() => {
     if (controls) {
       controls.update();
-    }
-
-    if (stateManagerRef.current) {
-      stateManagerRef.current.update(camera, controls, delta);
+      stateManagerRef.current.update(camera, controls);
+      // setCameraTransitioning bails out when the value is unchanged, so this is
+      // a no-op on all but the two frames where a transition starts or ends.
+      setCameraTransitioning(stateManagerRef.current.isCurrentlyTransitioning());
     }
   });
 
-  // Expose methods to store
+  // Hand the rig to the store so UI components can drive the camera without
+  // reaching for a global. Re-registers whenever the callbacks are rebuilt
+  // (i.e. when the OrbitControls instance changes) to avoid a stale closure.
   useEffect(() => {
-    // You could expose these methods to the store for external use
-    (window as any).cameraControls = {
-      animateToPreset,
-      flyToLocation,
-      isTransitioning: () => stateManagerRef.current?.isCurrentlyTransitioning() || false
-    };
-  }, []);
+    registerCameraController({ animateToPreset, flyToLocation });
+    return () => registerCameraController(null);
+  }, [registerCameraController, animateToPreset, flyToLocation]);
 
   return null; // This component doesn't render anything
 }

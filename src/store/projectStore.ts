@@ -2,14 +2,20 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { cityPlanningData } from '../data/cityPlanningData';
 import { corporateCampusData } from '../data/corporateCampusData';
+import { DEMO_MODE } from '../lib/demoMode';
+import { localRepo } from '../lib/localRepo';
 
-interface Project {
+export interface Project {
   id: string;
+  user_id?: string;
   name: string;
   description: string;
   model_type: 'planning' | 'corporate';
   sectors?: string[];
   theme?: string;
+  center_lat?: number;
+  center_lng?: number;
+  zoom?: number;
   created_at: string;
   updated_at?: string;
 }
@@ -30,11 +36,16 @@ export const useProjectStore = create<ProjectState>((set) => ({
   fetchProjects: async () => {
     set({ loading: true });
     try {
+      if (DEMO_MODE) {
+        set({ projects: await localRepo.listProjects() });
+        return;
+      }
+
       const { data, error } = await supabase
         .from('projects')
         .select('*')
         .order('created_at', { ascending: false });
-      
+
       if (error) throw error;
       set({ projects: data || [] });
     } finally {
@@ -43,6 +54,13 @@ export const useProjectStore = create<ProjectState>((set) => ({
   },
 
   createProject: async (project) => {
+    if (DEMO_MODE) {
+      // localRepo seeds locations/roads from the template itself.
+      const created = await localRepo.createProject(project);
+      set((state) => ({ projects: [created, ...state.projects] }));
+      return created.id;
+    }
+
     // Start a Supabase transaction
     const { data: newProject, error: projectError } = await supabase
       .from('projects')
@@ -53,8 +71,8 @@ export const useProjectStore = create<ProjectState>((set) => ({
     if (projectError) throw projectError;
 
     // Get the template data based on project type
-    const templateData = project.model_type === 'planning' 
-      ? cityPlanningData 
+    const templateData = project.model_type === 'planning'
+      ? cityPlanningData
       : corporateCampusData;
 
     // Filter locations based on selected sectors
@@ -110,12 +128,16 @@ export const useProjectStore = create<ProjectState>((set) => ({
   },
 
   updateProject: async (id, updates) => {
-    const { error } = await supabase
-      .from('projects')
-      .update(updates)
-      .eq('id', id);
+    if (DEMO_MODE) {
+      await localRepo.updateProject(id, updates);
+    } else {
+      const { error } = await supabase
+        .from('projects')
+        .update(updates)
+        .eq('id', id);
 
-    if (error) throw error;
+      if (error) throw error;
+    }
     set((state) => ({
       projects: state.projects.map((p) =>
         p.id === id ? { ...p, ...updates } : p
@@ -124,12 +146,16 @@ export const useProjectStore = create<ProjectState>((set) => ({
   },
 
   deleteProject: async (id) => {
-    const { error } = await supabase
-      .from('projects')
-      .delete()
-      .eq('id', id);
+    if (DEMO_MODE) {
+      await localRepo.deleteProject(id);
+    } else {
+      const { error } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', id);
 
-    if (error) throw error;
+      if (error) throw error;
+    }
     set((state) => ({
       projects: state.projects.filter((p) => p.id !== id),
     }));

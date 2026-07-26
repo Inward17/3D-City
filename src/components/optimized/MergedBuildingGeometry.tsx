@@ -22,11 +22,11 @@ function createMergedBuildingGeometry(locations: Location[]) {
 
     // Create wall geometry
     const wallGeometry = new THREE.BoxGeometry(
-      dimensions.width, 
-      dimensions.height, 
+      dimensions.width,
+      dimensions.height,
       dimensions.depth
     );
-    
+
     // Position the building
     const wallMatrix = new THREE.Matrix4();
     wallMatrix.setPosition(
@@ -62,31 +62,31 @@ function createMergedBuildingGeometry(locations: Location[]) {
 function getBuildingDimensions(type: string) {
   switch (type) {
     case 'Building':
-      return { width: 2, height: 4, depth: 2 };
+      return { width: 20, height: 40, depth: 20 };
     case 'Hospital':
-      return { width: 3, height: 3, depth: 3 };
+      return { width: 30, height: 30, depth: 30 };
     case 'School':
-      return { width: 3, height: 2, depth: 3 };
+      return { width: 30, height: 20, depth: 30 };
     case 'Hotel':
-      return { width: 2, height: 5, depth: 2 };
+      return { width: 20, height: 50, depth: 20 };
     case 'Shop':
     case 'Restaurant':
     case 'Cafe':
-      return { width: 2, height: 1.5, depth: 2 };
+      return { width: 20, height: 15, depth: 20 };
     case 'Library':
     case 'Museum':
-      return { width: 2.5, height: 2, depth: 2.5 };
+      return { width: 25, height: 20, depth: 25 };
     default:
-      return { width: 2, height: 2, depth: 2 };
+      return { width: 20, height: 20, depth: 20 };
   }
 }
 
 export function MergedBuildingGeometry({ locations }: MergedBuildingGeometryProps) {
   const { weather } = useCityStore();
 
-  const mergedGeometry = useMemo(() => 
-    createMergedBuildingGeometry(locations), 
-  [locations]);
+  const mergedGeometry = useMemo(() =>
+    createMergedBuildingGeometry(locations),
+    [locations]);
 
   // Adjust material based on weather
   const materialProps = useMemo(() => {
@@ -111,24 +111,24 @@ export function MergedBuildingGeometry({ locations }: MergedBuildingGeometryProp
   return (
     <group>
       {/* Merged building walls - single draw call */}
-      <mesh 
-        geometry={mergedGeometry.walls} 
-        castShadow 
+      <mesh
+        geometry={mergedGeometry.walls ?? undefined}
+        castShadow
         receiveShadow
       >
-        <meshStandardMaterial 
+        <meshStandardMaterial
           {...materialProps}
           envMapIntensity={0.8}
         />
       </mesh>
 
       {/* Merged building roofs - single draw call */}
-      <mesh 
-        geometry={mergedGeometry.roofs} 
-        castShadow 
+      <mesh
+        geometry={mergedGeometry.roofs ?? undefined}
+        castShadow
         receiveShadow
       >
-        <meshStandardMaterial 
+        <meshStandardMaterial
           color="#4a5568"
           roughness={0.8}
           metalness={0.3}

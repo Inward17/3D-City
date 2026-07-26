@@ -1,12 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
-import { ProjectForm } from './ProjectForm';
+import { ProjectForm } from '../features/projects/ProjectForm';
 
 export function EditProject() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { projects, fetchProjects } = useProjectStore();
   const [loading, setLoading] = useState(true);
 
@@ -43,7 +42,10 @@ export function EditProject() {
         description: project.description || '',
         model_type: project.model_type,
         sectors: project.sectors || [],
-        theme: project.theme || 'default'
+        theme: project.theme || 'default',
+        center_lat: project.center_lat,
+        center_lng: project.center_lng,
+        zoom: project.zoom
       }}
     />
   );

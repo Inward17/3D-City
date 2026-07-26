@@ -1,6 +1,9 @@
 import { Color } from 'three';
 
-export type ZoneType = 
+/** An [x, y, z] triple, as three.js and R3F expect for positions and scales. */
+export type Vec3 = [number, number, number];
+
+export type ZoneType =
   // City Planning Types
   | 'residential'
   | 'industrial'
@@ -52,6 +55,35 @@ export interface EmployeeAllocation {
   departments: string[];
 }
 
+export type RoofStyle = 'flat' | 'pitched' | 'stepped';
+
+/**
+ * Per-building design overrides.
+ *
+ * Everything is optional: an absent field falls back to the type's default
+ * footprint, so existing data keeps rendering exactly as before.
+ */
+export interface BuildingDesign {
+  /** Footprint across X, in metres. */
+  width?: number;
+  /** Footprint across Z, in metres. */
+  depth?: number;
+  /** Storey count; drives height at STOREY_HEIGHT metres each. */
+  floors?: number;
+  /** Overrides the facade colour. */
+  color?: string;
+  roof?: RoofStyle;
+  /**
+   * Occupant capacity, overriding the value derived from floor area.
+   *
+   * The geometric estimate is a reasonable default but can't know that a block
+   * is half-empty, or that a depot holds far fewer people than its volume
+   * suggests. Setting this pins the number; clearing it returns to the derived
+   * value.
+   */
+  population?: number;
+}
+
 export interface Location {
   id: string;
   name: string;
@@ -60,6 +92,8 @@ export interface Location {
   description: string;
   color?: string;
   zone?: ZoneType;
+  /** User customisations from the design editor. */
+  design?: BuildingDesign;
   statistics?: ZoneStatistics;
   security?: SecurityZone;
   employees?: EmployeeAllocation;

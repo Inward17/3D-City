@@ -1,7 +1,9 @@
 import { useRef, useMemo, useEffect } from 'react';
-import { useFrame } from '@react-three/fiber';
 import { useCityStore } from '../../store/cityStore';
 import { Location, Road } from '../../types/city';
+import {
+  STREET_LAMP, STREET_TREE, BENCH, ROAD_WIDTH, PAVEMENT_WIDTH
+} from '../../utils/scale';
 import * as THREE from 'three';
 
 interface InstancedStreetAssetsProps {
@@ -9,43 +11,58 @@ interface InstancedStreetAssetsProps {
   roads: Road[];
 }
 
-// Asset configurations for instancing
-const STREET_ASSETS = {
+type AssetType = 'streetLamps' | 'trees' | 'benches';
+
+/*
+  Street furniture, sized from scale.ts.
+
+  These were previously invented by eye and were wildly out of proportion: a
+  30 m street lamp (three storeys, topped with a 3 m glowing ball), and a 12 m
+  bench with a 5 m backrest — longer than the bus driving past it. The render
+  block also hard-coded its own copies of those dimensions inline, so the
+  config above it was dead weight; there is now one source per asset.
+
+  Spacing and kerb offsets are derived from the carriageway width plus pavement
+  rather than arbitrary 25-40 m gaps that dropped lamps into neighbouring plots.
+*/
+const ASSETS: Record<AssetType, {
+  spacing: number;
+  roadOffset: number;
+  /** Height of the primary mesh's centre above ground. */
+  primaryY: number;
+  /** Height of the secondary mesh's centre, when the asset has one. */
+  secondaryY?: number;
+}> = {
   streetLamps: {
-    geometry: () => {
-      const pole = new THREE.CylinderGeometry(0.05, 0.05, 3);
-      const light = new THREE.SphereGeometry(0.15);
-      light.translate(0, 3.2, 0);
-      return { pole, light };
-    },
-    spacing: 12,
-    roadOffset: 2.5
+    spacing: 30,
+    roadOffset: ROAD_WIDTH.secondary / 2 + PAVEMENT_WIDTH * 0.5,
+    primaryY: STREET_LAMP.height / 2,
+    secondaryY: STREET_LAMP.height + STREET_LAMP.lanternRadius * 0.5
   },
   trees: {
-    geometry: () => ({
-      trunk: new THREE.CylinderGeometry(0.1, 0.15, 1.2),
-      foliage: new THREE.SphereGeometry(0.5)
-    }),
-    spacing: 8,
-    roadOffset: 4
+    spacing: 18,
+    roadOffset: ROAD_WIDTH.secondary / 2 + PAVEMENT_WIDTH * 1.4,
+    primaryY: STREET_TREE.trunkHeight / 2,
+    secondaryY: STREET_TREE.trunkHeight + STREET_TREE.canopyRadius * 0.75
   },
   benches: {
-    geometry: () => {
-      const seat = new THREE.BoxGeometry(1.2, 0.1, 0.4);
-      const back = new THREE.BoxGeometry(1.2, 0.5, 0.1);
-      back.translate(0, 0.3, -0.15);
-      return { seat, back };
-    },
-    spacing: 20,
-    roadOffset: 3
+    spacing: 45,
+    roadOffset: ROAD_WIDTH.secondary / 2 + PAVEMENT_WIDTH * 0.6,
+    primaryY: BENCH.seatHeight
   }
 };
 
+/** Deterministic 0..1 per instance, so furniture doesn't reshuffle on rerender. */
+function jitter(i: number, salt: number): number {
+  const n = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
+  return n - Math.floor(n);
+}
+
 // Generate positions along roads
 function generateAssetPositions(
-  roads: Road[], 
-  locations: Location[], 
-  spacing: number, 
+  roads: Road[],
+  locations: Location[],
+  spacing: number,
   offset: number
 ) {
   const positions: THREE.Vector3[] = [];
@@ -62,6 +79,8 @@ function generateAssetPositions(
     );
 
     const itemCount = Math.floor(roadLength / spacing);
+    if (itemCount <= 0) return;
+
     const direction = new THREE.Vector2(
       to.position[0] - from.position[0],
       to.position[2] - from.position[2]
@@ -73,18 +92,18 @@ function generateAssetPositions(
       const baseX = from.position[0] + (to.position[0] - from.position[0]) * t;
       const baseZ = from.position[2] + (to.position[2] - from.position[2]) * t;
 
-      // Place on both sides of the road
       [1, -1].forEach(side => {
         const finalX = baseX + perpendicular.x * offset * side;
         const finalZ = baseZ + perpendicular.y * offset * side;
 
-        // Check if position is clear of buildings
+        // Keep clear of building footprints. 18 m covers the largest default
+        // half-footprint (30 m wide) plus a margin.
         const isClear = locations.every(loc => {
           const dist = Math.sqrt(
             Math.pow(finalX - loc.position[0], 2) +
             Math.pow(finalZ - loc.position[2], 2)
           );
-          return dist > 3;
+          return dist > 18;
         });
 
         if (isClear) {
@@ -98,49 +117,39 @@ function generateAssetPositions(
   return { positions, rotations };
 }
 
-// Individual instanced asset component
-function InstancedAsset({ 
-  type, 
-  positions, 
-  rotations, 
-  geometry 
-}: { 
-  type: string; 
-  positions: THREE.Vector3[]; 
+function InstancedAsset({
+  type,
+  positions,
+  rotations
+}: {
+  type: AssetType;
+  positions: THREE.Vector3[];
   rotations: number[];
-  geometry: any;
 }) {
   const mainMeshRef = useRef<THREE.InstancedMesh>(null);
   const secondaryMeshRef = useRef<THREE.InstancedMesh>(null);
   const { timeOfDay, weather } = useCityStore();
-  
-  const isNight = timeOfDay < 6 || timeOfDay > 18;
 
-  // Update instance matrices
+  const isNight = timeOfDay < 6 || timeOfDay > 18;
+  const spec = ASSETS[type];
+  const hasSecondary = spec.secondaryY !== undefined;
+
   useEffect(() => {
-    if (!mainMeshRef.current || positions.length === 0) return;
+    if (!mainMeshRef.current) return;
 
     const tempMatrix = new THREE.Matrix4();
     const tempPosition = new THREE.Vector3();
     const tempQuaternion = new THREE.Quaternion();
-    const tempScale = new THREE.Vector3(1, 1, 1);
+    const tempScale = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
 
     positions.forEach((position, i) => {
-      tempPosition.copy(position);
-      
-      // Adjust height based on asset type
-      if (type === 'trees') {
-        tempPosition.y += 0.6; // Trunk height offset
-      } else if (type === 'benches') {
-        tempPosition.y += 0.05; // Slight elevation
-      }
+      // Geometry is centred on its own origin, so the height offset comes from
+      // the spec rather than the old hard-coded +6 / +12 / +32 magic numbers.
+      tempPosition.set(position.x, spec.primaryY, position.z);
+      tempQuaternion.setFromAxisAngle(up, rotations[i]);
+      tempScale.setScalar(0.92 + jitter(i, 1) * 0.16);
 
-      tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotations[i]);
-      
-      // Add slight scale variation
-      const scaleVariation = 0.9 + Math.random() * 0.2;
-      tempScale.setScalar(scaleVariation);
-      
       tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
       mainMeshRef.current!.setMatrixAt(i, tempMatrix);
     });
@@ -148,16 +157,15 @@ function InstancedAsset({
     mainMeshRef.current.instanceMatrix.needsUpdate = true;
     mainMeshRef.current.count = positions.length;
 
-    // Handle secondary geometry (foliage for trees, back for benches, light for lamps)
-    if (secondaryMeshRef.current && geometry.foliage) {
+    if (secondaryMeshRef.current && spec.secondaryY !== undefined) {
       positions.forEach((position, i) => {
-        tempPosition.copy(position);
-        tempPosition.y += type === 'trees' ? 1.2 : 3.2; // Foliage or light height
-        
-        tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotations[i]);
-        const scaleVariation = 0.8 + Math.random() * 0.4;
-        tempScale.setScalar(scaleVariation);
-        
+        tempPosition.set(position.x, spec.secondaryY!, position.z);
+        tempQuaternion.setFromAxisAngle(up, rotations[i]);
+        // Canopies vary more than poles; lanterns stay uniform.
+        tempScale.setScalar(
+          type === 'trees' ? 0.85 + jitter(i, 2) * 0.3 : 1
+        );
+
         tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
         secondaryMeshRef.current!.setMatrixAt(i, tempMatrix);
       });
@@ -165,119 +173,58 @@ function InstancedAsset({
       secondaryMeshRef.current.instanceMatrix.needsUpdate = true;
       secondaryMeshRef.current.count = positions.length;
     }
-  }, [positions, rotations, type, geometry]);
-
-  // Animate street lamps at night
-  useFrame((state) => {
-    if (type === 'streetLamps' && secondaryMeshRef.current && isNight) {
-      const time = state.clock.getElapsedTime();
-      
-      // Subtle flickering effect
-      positions.forEach((_, i) => {
-        const tempMatrix = new THREE.Matrix4();
-        secondaryMeshRef.current!.getMatrixAt(i, tempMatrix);
-        
-        const position = new THREE.Vector3();
-        const quaternion = new THREE.Quaternion();
-        const scale = new THREE.Vector3();
-        tempMatrix.decompose(position, quaternion, scale);
-        
-        // Add subtle scale pulsing
-        const pulse = 1 + Math.sin(time * 3 + i) * 0.05;
-        scale.setScalar(pulse);
-        
-        tempMatrix.compose(position, quaternion, scale);
-        secondaryMeshRef.current!.setMatrixAt(i, tempMatrix);
-      });
-      
-      secondaryMeshRef.current.instanceMatrix.needsUpdate = true;
-    }
-  });
+  }, [positions, rotations, type, spec]);
 
   if (positions.length === 0) return null;
 
-  // Material properties based on type and weather
-  const getMaterialProps = (isSecondary = false) => {
-    if (type === 'streetLamps') {
-      if (isSecondary) {
-        return {
-          color: isNight ? '#ffd700' : '#f0f0f0',
-          emissive: isNight ? '#ffd700' : '#000000',
-          emissiveIntensity: isNight ? 1.2 : 0,
-          metalness: 0.1,
-          roughness: 0.3
-        };
-      }
-      return {
-        color: '#666666',
-        metalness: 0.8,
-        roughness: 0.2
-      };
-    } else if (type === 'trees') {
-      if (isSecondary) {
-        let color = '#22c55e';
-        if (weather === 'snow') color = '#a5d6a7';
-        if (weather === 'rain') color = '#1b5e20';
-        
-        return {
-          color,
-          roughness: 0.8,
-          metalness: 0.1
-        };
-      }
-      return {
-        color: '#4a3728',
-        roughness: 0.9,
-        metalness: 0.1
-      };
-    } else if (type === 'benches') {
-      return {
-        color: '#8b4513',
-        roughness: 0.8,
-        metalness: 0.1
-      };
-    }
-    
-    return {
-      color: '#666666',
-      roughness: 0.7,
-      metalness: 0.3
-    };
-  };
+  const primaryMaterial =
+    type === 'streetLamps' ? { color: '#4b5058', metalness: 0.7, roughness: 0.35 }
+      : type === 'trees' ? { color: '#5a4632', metalness: 0.05, roughness: 0.95 }
+        : { color: '#7a5a3a', metalness: 0.05, roughness: 0.85 };
+
+  const canopyColor =
+    weather === 'snow' ? '#9fc3a5' : weather === 'rain' ? '#2f6b3a' : '#3f8f52';
 
   return (
-    <group>
-      {/* Main geometry (poles, trunks, seats) */}
-      <instancedMesh 
+    <group name={`street-${type}`}>
+      <instancedMesh
         ref={mainMeshRef}
         args={[undefined, undefined, Math.max(positions.length, 1)]}
         castShadow
         receiveShadow
       >
         {type === 'streetLamps' ? (
-          <cylinderGeometry args={[0.05, 0.05, 3]} />
+          <cylinderGeometry args={[STREET_LAMP.radius * 0.8, STREET_LAMP.radius, STREET_LAMP.height, 8]} />
         ) : type === 'trees' ? (
-          <cylinderGeometry args={[0.1, 0.15, 1.2]} />
+          <cylinderGeometry args={[STREET_TREE.trunkRadius * 0.8, STREET_TREE.trunkRadius, STREET_TREE.trunkHeight, 8]} />
         ) : (
-          <boxGeometry args={[1.2, 0.1, 0.4]} />
+          <boxGeometry args={[BENCH.length, 0.08, BENCH.depth]} />
         )}
-        <meshStandardMaterial {...getMaterialProps(false)} />
+        <meshStandardMaterial {...primaryMaterial} />
       </instancedMesh>
 
-      {/* Secondary geometry (lights, foliage, backs) */}
-      {(type === 'streetLamps' || type === 'trees') && (
-        <instancedMesh 
+      {hasSecondary && (
+        <instancedMesh
           ref={secondaryMeshRef}
           args={[undefined, undefined, Math.max(positions.length, 1)]}
           castShadow
-          receiveShadow
         >
           {type === 'streetLamps' ? (
-            <sphereGeometry args={[0.15]} />
+            <sphereGeometry args={[STREET_LAMP.lanternRadius, 10, 8]} />
           ) : (
-            <sphereGeometry args={[0.5]} />
+            <sphereGeometry args={[STREET_TREE.canopyRadius, 12, 10]} />
           )}
-          <meshStandardMaterial {...getMaterialProps(true)} />
+          {type === 'streetLamps' ? (
+            <meshStandardMaterial
+              color={isNight ? '#ffe9b0' : '#e8e8e8'}
+              emissive={isNight ? '#ffcf6e' : '#000000'}
+              emissiveIntensity={isNight ? 3 : 0}
+              toneMapped={!isNight}
+              roughness={0.4}
+            />
+          ) : (
+            <meshStandardMaterial color={canopyColor} roughness={0.9} metalness={0.02} />
+          )}
         </instancedMesh>
       )}
     </group>
@@ -285,26 +232,24 @@ function InstancedAsset({
 }
 
 export function InstancedStreetAssets({ locations, roads }: InstancedStreetAssetsProps) {
-  // Generate positions for each asset type
   const assetData = useMemo(() => {
-    const data: Record<string, { positions: THREE.Vector3[]; rotations: number[] }> = {};
-    
-    Object.entries(STREET_ASSETS).forEach(([type, config]) => {
-      data[type] = generateAssetPositions(roads, locations, config.spacing, config.roadOffset);
+    const out = {} as Record<AssetType, { positions: THREE.Vector3[]; rotations: number[] }>;
+    (Object.keys(ASSETS) as AssetType[]).forEach(type => {
+      out[type] = generateAssetPositions(
+        roads, locations, ASSETS[type].spacing, ASSETS[type].roadOffset
+      );
     });
-    
-    return data;
+    return out;
   }, [roads, locations]);
 
   return (
     <group name="instanced-street-assets">
-      {Object.entries(STREET_ASSETS).map(([type, config]) => (
+      {(Object.keys(ASSETS) as AssetType[]).map(type => (
         <InstancedAsset
           key={type}
           type={type}
-          positions={assetData[type]?.positions || []}
-          rotations={assetData[type]?.rotations || []}
-          geometry={config.geometry()}
+          positions={assetData[type].positions}
+          rotations={assetData[type].rotations}
         />
       ))}
     </group>

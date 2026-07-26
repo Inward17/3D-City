@@ -4,11 +4,10 @@ import { Suspense } from 'react';
 import { EnvironmentLayer } from './layers/Environment';
 import { BuildingsLayer } from './layers/Buildings';
 import { RoadsLayer } from './layers/Roads';
+import { RoutePreview } from './layers/RoutePreview';
 import { UILayer } from './layers/UI';
 import { SmoothCameraControls } from './optimized/SmoothCameraControls';
 import { EnhancedPostProcessing } from './optimized/EnhancedPostProcessing';
-import { FrustumCulling } from './optimized/FrustumCulling';
-import { InstancedTraffic } from './optimized/InstancedTraffic';
 import { InstancedVegetation } from './optimized/InstancedVegetation';
 import { InstancedStreetAssets } from './optimized/InstancedStreetAssets';
 import { InstancedVehicles } from './optimized/InstancedVehicles';
@@ -25,42 +24,44 @@ interface CitySceneProps {
 function SceneContent({ locations, roads }: CitySceneProps) {
   return (
     <Suspense fallback={null}>
-      {/* Camera */}
-      <PerspectiveCamera 
-        makeDefault 
-        position={[20, 20, 20]} 
-        fov={75}
-        near={0.1}
-        far={1000}
+      {/* Camera. Positioned for a city spanning ~±250 units; the old
+          [20,20,20] / far=1000 put the viewer inside the first block with the
+          far plane cutting through the map. */}
+      <PerspectiveCamera
+        makeDefault
+        position={[260, 200, 260]}
+        fov={55}
+        near={1}
+        far={6000}
       />
-      
+
       {/* Enhanced Camera Controls */}
       <SmoothCameraControls />
-      
-      {/* Frustum Culling Wrapper */}
-      <FrustumCulling locations={locations}>
-        {/* Environment layer - lighting, sky, fog */}
-        <EnvironmentLayer />
-        
-        {/* Terrain base */}
-        <Terrain locations={locations} roads={roads} />
-        
-        {/* Buildings layer - back to original with optimizations */}
-        <BuildingsLayer locations={locations} />
-        
-        {/* Roads layer - spline-based roads */}
-        <RoadsLayer locations={locations} roads={roads} />
-        
-        {/* Optimized instanced elements - single draw calls */}
-        <InstancedStreetAssets locations={locations} roads={roads} />
-        <InstancedVehicles locations={locations} roads={roads} />
-        <InstancedVegetation locations={locations} roads={roads} />
-        <Weather locations={locations} />
-        
-        {/* UI layer - tooltips and overlays */}
-        <UILayer locations={locations} />
-      </FrustumCulling>
-      
+
+      {/* Environment layer - lighting, sky, fog */}
+      <EnvironmentLayer />
+
+      {/* Terrain base */}
+      <Terrain />
+
+      {/* Buildings layer - back to original with optimizations */}
+      <BuildingsLayer locations={locations} />
+
+      {/* Roads layer - spline-based roads */}
+      <RoadsLayer locations={locations} roads={roads} />
+
+      {/* Rubber-band line while drawing a new route */}
+      <RoutePreview locations={locations} />
+
+      {/* Optimized instanced elements - single draw calls */}
+      <InstancedStreetAssets locations={locations} roads={roads} />
+      <InstancedVehicles locations={locations} roads={roads} />
+      <InstancedVegetation locations={locations} roads={roads} />
+      <Weather locations={locations} />
+
+      {/* UI layer - tooltips and overlays */}
+      <UILayer locations={locations} />
+
       {/* Minimal Post-Processing */}
       <EnhancedPostProcessing />
     </Suspense>
@@ -69,19 +70,12 @@ function SceneContent({ locations, roads }: CitySceneProps) {
 
 export function CityScene({ locations, roads }: CitySceneProps) {
   return (
-    <Canvas 
+    <Canvas
       shadows
-      gl={{ 
+      gl={{
         antialias: true,
-        alpha: false,
         powerPreference: "high-performance",
         stencil: false,
-        physicallyCorrectLights: true,
-        // Enable shadow mapping
-        shadowMap: {
-          enabled: true,
-          type: THREE.PCFSoftShadowMap
-        },
         // Fix blurriness with proper pixel ratio
         pixelRatio: Math.min(window.devicePixelRatio, 2),
         // Ensure proper color space
@@ -90,10 +84,9 @@ export function CityScene({ locations, roads }: CitySceneProps) {
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.0
       }}
-      camera={{ fov: 75, near: 0.1, far: 1000 }}
       performance={{ min: 0.5 }}
       dpr={[1, 2]}
-      frameloop="demand" // Only render when needed
+      style={{ width: '100%', height: '100%' }}
     >
       <SceneContent locations={locations} roads={roads} />
     </Canvas>

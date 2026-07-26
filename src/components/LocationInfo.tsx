@@ -1,6 +1,10 @@
+import { useState } from 'react';
 import { useCityStore } from '../store/cityStore';
-import { Building, Trees, Landmark, UtensilsCrossed, Store, School, Guitar as Hospital, Library, Coffee, Hotel, X } from 'lucide-react';
+import { Building, Trees, Landmark, UtensilsCrossed, Store, School, Guitar as Hospital, Library, Coffee, Hotel, X, Trash2, Route } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Location } from '../types/city';
+import { buildingCapacity, occupancyFactor } from '../utils/cityMetrics';
+import { BuildingDesigner } from './BuildingDesigner';
 
 const typeIcons = {
   Building,
@@ -15,125 +19,211 @@ const typeIcons = {
   Hotel,
 };
 
-// Generate occupancy data based on time and building type
-function generateOccupancyData(type: string, currentTime: number) {
-  const data = [];
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-  
-  const getBaseOccupancy = (hour: number, type: string) => {
-    switch (type) {
-      case 'Office':
-        return hour >= 9 && hour <= 17 ? 80 : hour >= 7 && hour <= 19 ? 40 : 10;
-      case 'Restaurant':
-        return (hour >= 11 && hour <= 14) || (hour >= 18 && hour <= 21) ? 90 : 30;
-      case 'Shop':
-        return hour >= 10 && hour <= 20 ? 70 : 0;
-      case 'School':
-        return hour >= 8 && hour <= 15 ? 95 : hour >= 15 && hour <= 17 ? 40 : 5;
-      case 'Hospital':
-        return 60 + Math.sin(hour * Math.PI / 12) * 20;
-      case 'Library':
-        return hour >= 9 && hour <= 18 ? 50 + Math.sin(hour * Math.PI / 9) * 30 : 10;
-      case 'Cafe':
-        return (hour >= 7 && hour <= 10) || (hour >= 12 && hour <= 14) ? 85 : 40;
-      case 'Hotel':
-        return hour >= 22 || hour <= 6 ? 90 : 50;
-      default:
-        return 50;
-    }
-  };
+interface OccupancyPoint {
+  hour: string;
+  /** Estimated people present in this building at that hour. */
+  people: number;
+  /** Percentage of the building's capacity. */
+  occupancy: number;
+  isCurrent: boolean;
+}
 
-  hours.forEach(hour => {
-    const baseOccupancy = getBaseOccupancy(hour, type);
-    const randomVariation = Math.random() * 20 - 10;
-    const occupancy = Math.min(100, Math.max(0, baseOccupancy + randomVariation));
-    
-    // Highlight current hour
-    const isCurrent = Math.floor(currentTime) === hour;
-    
-    data.push({
-      hour: hour.toString().padStart(2, '0') + ':00',
-      occupancy: Math.round(occupancy),
-      isCurrent,
-    });
+/**
+ * Occupancy across the day for one building.
+ *
+ * Uses the shared per-type curve and capacity model, so this chart agrees with
+ * the figures in Analytics. The previous version added Math.random() jitter —
+ * which reshuffled the whole chart on every render — and switched on a type
+ * called 'Office' that does not exist in Location['type'] (offices are
+ * 'Building'), so every office silently fell through to a flat default.
+ */
+function generateOccupancyData(location: Location, currentTime: number): OccupancyPoint[] {
+  const capacity = buildingCapacity(location);
+
+  return Array.from({ length: 24 }, (_, hour) => {
+    const factor = occupancyFactor(location.type, hour);
+    return {
+      hour: `${hour.toString().padStart(2, '0')}:00`,
+      people: Math.round(capacity * factor),
+      occupancy: Math.round(factor * 100),
+      isCurrent: Math.floor(currentTime) === hour
+    };
   });
-
-  return data;
 }
 
 export function LocationInfo() {
-  const { selectedLocation, setSelectedLocation, timeOfDay } = useCityStore();
+  const { selectedLocation, setSelectedLocation, timeOfDay, roads, removeLocation } =
+    useCityStore();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [tab, setTab] = useState<'info' | 'design'>('info');
 
   if (!selectedLocation) return null;
 
+  const connectedRoads = roads.filter(
+    r => r.from === selectedLocation.id || r.to === selectedLocation.id
+  ).length;
+
   const Icon = typeIcons[selectedLocation.type] || Building;
-  const occupancyData = generateOccupancyData(selectedLocation.type, timeOfDay);
-  const currentOccupancy = occupancyData.find(d => d.isCurrent)?.occupancy || 0;
+  const occupancyData = generateOccupancyData(selectedLocation, timeOfDay);
+  const current = occupancyData.find(d => d.isCurrent);
+  const currentOccupancy = current?.occupancy ?? 0;
+  const currentPeople = current?.people ?? 0;
+  const capacity = buildingCapacity(selectedLocation);
 
   return (
-    <div
-      className="absolute bottom-4 left-4 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-lg dark:shadow-gray-900/20 max-w-md transform transition-all duration-300 ease-in-out border border-gray-200 dark:border-gray-700"
-    >
-      <div className="flex justify-between items-start mb-4">
-        <div className="flex items-center gap-2">
-          <Icon className="w-5 h-5 text-gray-700 dark:text-gray-300" />
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white">{selectedLocation.name}</h2>
+    <div className="panel absolute bottom-4 left-4 z-10 w-[340px] overflow-hidden">
+      <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-3.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+            style={{ backgroundColor: `${selectedLocation.color || '#64748b'}22` }}
+          >
+            <Icon className="h-4 w-4" style={{ color: selectedLocation.color || '#64748b' }} />
+          </span>
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-semibold leading-tight text-slate-900 dark:text-white">
+              {selectedLocation.name}
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {selectedLocation.type}
+              {selectedLocation.zone && ` · ${selectedLocation.zone}`}
+            </p>
+          </div>
         </div>
         <button
           onClick={() => setSelectedLocation(null)}
-          className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+          className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-900/5 hover:text-slate-700 dark:hover:bg-white/5 dark:hover:text-slate-200"
+          aria-label="Close"
         >
-          <X size={20} />
+          <X size={16} />
         </button>
       </div>
-      
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <p className="text-sm text-gray-600 dark:text-gray-400">Type: {selectedLocation.type}</p>
-          <p className="text-sm text-gray-700 dark:text-gray-300">{selectedLocation.description}</p>
+
+      <div className="px-4 pb-3">
+        <div className="segment">
+          {(['info', 'design'] as const).map(id => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={`segment-item flex-1 justify-center capitalize ${
+                tab === id ? 'segment-item-active' : ''
+              }`}
+            >
+              {id}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === 'design' ? (
+        <div className="border-t border-slate-900/[0.07] dark:border-white/[0.08]">
+          <BuildingDesigner location={selectedLocation} />
+        </div>
+      ) : (
+      <>
+      {selectedLocation.description && (
+        <p className="px-4 pb-3 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+          {selectedLocation.description}
+        </p>
+      )}
+
+      <div className="border-t border-slate-900/[0.07] px-4 py-3 dark:border-white/[0.08]">
+        <div className="mb-1 flex items-baseline justify-between">
+          <h3 className="panel-heading">Occupancy today</h3>
+          <span className="flex items-baseline gap-1.5">
+            <span className="text-lg font-semibold tabular-nums text-sky-600 dark:text-sky-400">
+              {currentPeople.toLocaleString()}
+            </span>
+            <span className="text-xs text-slate-400">
+              / {capacity.toLocaleString()} ({currentOccupancy}%)
+            </span>
+          </span>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Current Occupancy</h3>
-            <span className="text-lg font-bold text-blue-600 dark:text-blue-400">{currentOccupancy}%</span>
-          </div>
-          
-          <div className="h-48 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={occupancyData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis 
-                  dataKey="hour"
-                  interval={3}
-                  tick={{ fontSize: 12, fill: '#6b7280' }}
-                />
-                <YAxis 
-                  domain={[0, 100]}
-                  tick={{ fontSize: 12, fill: '#6b7280' }}
-                  tickFormatter={(value) => `${value}%`}
-                />
-                <Tooltip
-                  formatter={(value) => [`${value}%`, 'Occupancy']}
-                  labelFormatter={(label) => `Time: ${label}`}
-                  contentStyle={{
-                    backgroundColor: '#ffffff',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px'
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="occupancy"
-                  stroke="#2563eb"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 8 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+        <div className="h-28 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={occupancyData} margin={{ top: 6, right: 4, bottom: 0, left: -28 }}>
+              <CartesianGrid strokeDasharray="2 4" stroke="currentColor" className="text-slate-300 dark:text-slate-700" vertical={false} />
+              <XAxis
+                dataKey="hour"
+                interval={5}
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 10, fill: 'currentColor' }}
+                className="text-slate-400"
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 10, fill: 'currentColor' }}
+                className="text-slate-400"
+                tickFormatter={(value) => `${value}`}
+              />
+              <Tooltip
+                formatter={(value: number) => [value.toLocaleString(), 'People']}
+                labelFormatter={(label) => label}
+                contentStyle={{
+                  backgroundColor: 'rgb(15 23 42 / 0.92)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  color: '#fff',
+                  padding: '6px 10px'
+                }}
+                labelStyle={{ color: '#94a3b8' }}
+              />
+              <Line
+                type="monotone"
+                dataKey="people"
+                stroke="#38bdf8"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4, fill: '#38bdf8' }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
+      </div>
+      </>
+      )}
+
+      <div className="flex items-center justify-between border-t border-slate-900/[0.07] px-4 py-2.5 dark:border-white/[0.08]">
+        <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+          <Route className="h-3.5 w-3.5" />
+          {connectedRoads} {connectedRoads === 1 ? 'road' : 'roads'}
+        </span>
+
+        {confirmingDelete ? (
+          <span className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(false)}
+              className="text-xs font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmingDelete(false);
+                void removeLocation(selectedLocation.id);
+              }}
+              className="rounded-md bg-rose-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-rose-500"
+            >
+              {connectedRoads > 0 ? `Delete + ${connectedRoads} roads` : 'Confirm delete'}
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmingDelete(true)}
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-slate-500 transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </button>
+        )}
       </div>
     </div>
   );

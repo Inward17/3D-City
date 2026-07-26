@@ -16,7 +16,7 @@ export const cityPlanningData: CityData = {
       id: 'gov2',
       name: 'Police Headquarters',
       type: 'Building',
-      position: [5, 0, 3],
+      position: [50, 0, 30],
       description: 'Main police station serving the city.',
       color: '#1d4ed8',
       zone: 'government'
@@ -27,7 +27,7 @@ export const cityPlanningData: CityData = {
       id: 'health1',
       name: 'Central Hospital',
       type: 'Hospital',
-      position: [15, 0, 15],
+      position: [150, 0, 150],
       description: 'Major medical facility with emergency and specialist care.',
       color: '#ef4444',
       zone: 'healthcare'
@@ -36,7 +36,7 @@ export const cityPlanningData: CityData = {
       id: 'health2',
       name: 'Medical Center',
       type: 'Hospital',
-      position: [20, 0, 18],
+      position: [200, 0, 180],
       description: 'Modern healthcare facility with outpatient services.',
       color: '#ef4444',
       zone: 'healthcare'
@@ -47,7 +47,7 @@ export const cityPlanningData: CityData = {
       id: 'edu1',
       name: 'Public Library',
       type: 'Library',
-      position: [-15, 0, 15],
+      position: [-150, 0, 150],
       description: 'Main library with extensive collection and study areas.',
       color: '#84cc16',
       zone: 'education'
@@ -56,7 +56,7 @@ export const cityPlanningData: CityData = {
       id: 'edu2',
       name: 'High School',
       type: 'School',
-      position: [-20, 0, 18],
+      position: [-200, 0, 180],
       description: 'Public high school with modern facilities.',
       color: '#fb923c',
       zone: 'education'
@@ -67,7 +67,7 @@ export const cityPlanningData: CityData = {
       id: 'com1',
       name: 'Shopping Mall',
       type: 'Shop',
-      position: [15, 0, -15],
+      position: [150, 0, -150],
       description: 'Large retail complex with diverse stores.',
       color: '#a78bfa',
       zone: 'commercial'
@@ -76,7 +76,7 @@ export const cityPlanningData: CityData = {
       id: 'com2',
       name: 'Office Tower',
       type: 'Building',
-      position: [18, 0, -18],
+      position: [180, 0, -180],
       description: 'Modern office building housing various businesses.',
       color: '#60a5fa',
       zone: 'commercial'
@@ -87,7 +87,7 @@ export const cityPlanningData: CityData = {
       id: 'res1',
       name: 'Apartment Complex',
       type: 'Building',
-      position: [-15, 0, -15],
+      position: [-150, 0, -150],
       description: 'Modern residential complex with amenities.',
       color: '#8b5cf6',
       zone: 'residential'
@@ -96,7 +96,7 @@ export const cityPlanningData: CityData = {
       id: 'res2',
       name: 'Hotel District',
       type: 'Hotel',
-      position: [-18, 0, -18],
+      position: [-180, 0, -180],
       description: 'Upscale hotels and accommodations.',
       color: '#06b6d4',
       zone: 'residential'
@@ -107,7 +107,7 @@ export const cityPlanningData: CityData = {
       id: 'green1',
       name: 'Central Park',
       type: 'Park',
-      position: [0, 0, -20],
+      position: [0, 0, -200],
       description: 'Large urban park with recreational facilities.',
       color: '#4ade80',
       zone: 'green'
@@ -116,7 +116,7 @@ export const cityPlanningData: CityData = {
       id: 'green2',
       name: 'Botanical Gardens',
       type: 'Park',
-      position: [0, 0, -25],
+      position: [0, 0, -250],
       description: 'Beautiful gardens with diverse plant species.',
       color: '#4ade80',
       zone: 'green'
@@ -127,7 +127,7 @@ export const cityPlanningData: CityData = {
       id: 'trans1',
       name: 'Central Station',
       type: 'Building',
-      position: [25, 0, 0],
+      position: [250, 0, 0],
       description: 'Main transportation hub connecting the city.',
       color: '#64748b',
       zone: 'transportation'
@@ -136,7 +136,7 @@ export const cityPlanningData: CityData = {
       id: 'trans2',
       name: 'Bus Terminal',
       type: 'Building',
-      position: [28, 0, 3],
+      position: [280, 0, 30],
       description: 'Central bus station serving the city.',
       color: '#64748b',
       zone: 'transportation'
@@ -148,42 +148,42 @@ export const cityPlanningData: CityData = {
       id: 'r1',
       from: 'gov1',
       to: 'health1',
-      distance: 500,
+      distance: 5000,
       type: 'main'
     },
     {
       id: 'r2',
       from: 'gov1',
       to: 'edu1',
-      distance: 500,
+      distance: 5000,
       type: 'main'
     },
     {
       id: 'r3',
       from: 'gov1',
       to: 'com1',
-      distance: 500,
+      distance: 5000,
       type: 'main'
     },
     {
       id: 'r4',
       from: 'gov1',
       to: 'res1',
-      distance: 500,
+      distance: 5000,
       type: 'main'
     },
     {
       id: 'r5',
       from: 'green1',
       to: 'gov1',
-      distance: 400,
+      distance: 4000,
       type: 'main'
     },
     {
       id: 'r6',
       from: 'trans1',
       to: 'gov1',
-      distance: 400,
+      distance: 4000,
       type: 'main'
     },
 
@@ -192,42 +192,42 @@ export const cityPlanningData: CityData = {
       id: 'r7',
       from: 'health1',
       to: 'health2',
-      distance: 200,
+      distance: 2000,
       type: 'secondary'
     },
     {
       id: 'r8',
       from: 'edu1',
       to: 'edu2',
-      distance: 200,
+      distance: 2000,
       type: 'secondary'
     },
     {
       id: 'r9',
       from: 'com1',
       to: 'com2',
-      distance: 200,
+      distance: 2000,
       type: 'secondary'
     },
     {
       id: 'r10',
       from: 'res1',
       to: 'res2',
-      distance: 200,
+      distance: 2000,
       type: 'secondary'
     },
     {
       id: 'r11',
       from: 'green1',
       to: 'green2',
-      distance: 200,
+      distance: 2000,
       type: 'residential'
     },
     {
       id: 'r12',
       from: 'trans1',
       to: 'trans2',
-      distance: 200,
+      distance: 2000,
       type: 'main'
     }
   ]

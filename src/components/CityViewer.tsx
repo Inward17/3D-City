@@ -1,101 +1,84 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CityScene } from './CityScene';
 import { CityControls } from './CityControls';
-import { BuildingPlacement } from './BuildingPlacement';
+import { AddMenu } from './AddMenu';
 import { LocationInfo } from './LocationInfo';
-import { SectorSelector } from './SectorSelector';
+import { SectorSelector } from '../features/projects/components/SectorSelector';
 import { SectorAnalytics } from './SectorAnalytics';
 import { LocationComments } from './LocationComments';
 import { MiniMap } from './MiniMap';
 import { DarkModeToggle } from './DarkModeToggle';
+import { MapBackground } from './MapBackground';
 import { CameraUIControls } from './CameraUIControls';
 import { ArrowLeft, Loader2, Layers, BarChart3, MessageCircle } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { useCityStore } from '../store/cityStore';
-import { cityPlanningData } from '../data/cityPlanningData';
-import { corporateCampusData } from '../data/corporateCampusData';
+import { selectVisibleCity } from '../utils/selectVisibleCity';
 
 export function CityViewer() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { projects, fetchProjects, updateProject } = useProjectStore();
-  const { locations: userLocations, roads: userRoads, fetchProjectData, loading, selectedLocation } = useCityStore();
+  const {
+    locations: userLocations,
+    roads: userRoads,
+    fetchProjectData,
+    loading,
+    selectedLocation,
+    showGeoMap,
+    setActiveSectors
+  } = useCityStore();
   const [showSectorPanel, setShowSectorPanel] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [commentsLocationId, setCommentsLocationId] = useState<string | null>(null);
-  
+
   // Memoize project to prevent unnecessary re-renders
-  const project = useMemo(() => 
-    projects.find(p => p.id === id), 
-  [projects, id]);
+  const project = useMemo(() =>
+    projects.find(p => p.id === id),
+    [projects, id]);
 
   // Memoize active sectors based on project id and sectors
-  const activeSectors = useMemo(() => 
-    project?.sectors || [], 
-  [project?.sectors]);
+  const activeSectors = useMemo(() =>
+    project?.sectors || [],
+    [project?.sectors]);
 
   // Initial data fetching
   useEffect(() => {
     fetchProjects();
   }, [fetchProjects]);
 
+  // Refetch when the sector selection changes too: newly activated sectors need
+  // their template buildings materialised into storage before they can render.
   useEffect(() => {
-    if (id) {
-      fetchProjectData(id);
+    if (id && project) {
+      fetchProjectData(id, project.model_type, project.sectors || []);
     }
-  }, [id, fetchProjectData]);
+  }, [id, project, fetchProjectData]);
 
-  // Memoize template data based on project type
-  const templateData = useMemo(() => {
-    if (!project) return null;
-    return project.model_type === 'planning' ? cityPlanningData : corporateCampusData;
-  }, [project?.model_type]);
+  // Mirror the viewer's sector selection into the store so newly placed
+  // buildings can adopt a zone that's actually visible.
+  useEffect(() => {
+    setActiveSectors(activeSectors);
+  }, [activeSectors, setActiveSectors]);
 
-  // Memoize combined locations and roads
+  /*
+    Storage is the single source of truth for what's in the city. Template
+    buildings for the active sectors are materialised into storage on load
+    (see localRepo.ensureSectorLocations), so this view no longer merges the
+    static template in on top — doing both drew every seeded building twice and
+    left the on-screen ids unmatched by anything in the store, which is why
+    route drawing had nothing to connect to.
+  */
   const { combinedLocations, combinedRoads } = useMemo(() => {
-    if (!project || !userLocations || !userRoads || !templateData) {
+    if (!project || !userLocations || !userRoads) {
       return { combinedLocations: [], combinedRoads: [] };
     }
 
-    // Get template locations for selected sectors
-    const templateLocations = templateData.locations.filter(
-      location => activeSectors.includes(location.zone || '')
-    );
-
-    // Get user locations for selected sectors
-    const filteredUserLocations = userLocations.filter(
-      location => activeSectors.includes(location.zone || '')
-    );
-
-    // Combine template and user locations
-    const allLocations = [...templateLocations, ...filteredUserLocations];
-
-    // Create a set of valid location IDs
-    const validLocationIds = new Set([
-      ...templateLocations.map(loc => loc.id),
-      ...filteredUserLocations.map(loc => loc.id)
-    ]);
-
-    // Filter template roads
-    const templateRoads = templateData.roads.filter(road =>
-      validLocationIds.has(road.from) && validLocationIds.has(road.to)
-    );
-
-    // Filter user roads
-    const filteredUserRoads = userRoads.filter(road =>
-      validLocationIds.has(road.from) && validLocationIds.has(road.to)
-    );
-
-    // Combine template and user roads
-    const allRoads = [...templateRoads, ...filteredUserRoads];
-
-    return {
-      combinedLocations: allLocations,
-      combinedRoads: allRoads
-    };
-  }, [project?.id, userLocations, userRoads, templateData, activeSectors]);
+    const visible = selectVisibleCity(userLocations, userRoads, activeSectors);
+    return { combinedLocations: visible.locations, combinedRoads: visible.roads };
+  }, [project, userLocations, userRoads, activeSectors]);
 
   if (!project || loading) {
     return (
@@ -123,70 +106,71 @@ export function CityViewer() {
   };
 
   return (
-    <div id="city-viewer-container" className="h-screen w-full flex flex-col bg-gray-50 dark:bg-gray-900 transition-colors">
-      <div className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate('/')}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 dark:bg-blue-700 hover:bg-blue-700 dark:hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-800 focus:ring-blue-500 transition-colors"
-              >
-                <ArrowLeft className="h-5 w-5 mr-2" />
-                Back to Projects
-              </button>
-              <div>
-                <h1 className="text-xl font-semibold text-gray-900 dark:text-white">{project.name}</h1>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {project.model_type === 'planning' ? 'City Planning' : 'Corporate Campus'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <DarkModeToggle />
-              <button
-                onClick={() => setShowAnalytics(!showAnalytics)}
-                className={`inline-flex items-center px-4 py-2 border rounded-md shadow-sm text-sm font-medium transition-colors ${
-                  showAnalytics
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                    : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700'
-                } focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-800 focus:ring-blue-500`}
-              >
-                <BarChart3 className="h-5 w-5 mr-2" />
-                Analytics
-              </button>
-              {selectedLocation && (
-                <button
-                  onClick={() => handleLocationComments(selectedLocation.id)}
-                  className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-800 focus:ring-blue-500 transition-colors"
-                >
-                  <MessageCircle className="h-5 w-5 mr-2" />
-                  Comments
-                </button>
-              )}
-              <button
-                onClick={() => setShowSectorPanel(!showSectorPanel)}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-800 focus:ring-blue-500 transition-colors"
-              >
-                <Layers className="h-5 w-5 mr-2" />
-                Sectors
-              </button>
+    <div id="city-viewer-container" className="flex h-screen w-full flex-col bg-slate-100 dark:bg-slate-950">
+      <header className="z-20 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85">
+        <div className="flex items-center justify-between px-4 py-2.5 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              onClick={() => navigate('/')}
+              className="btn-ghost !px-2.5"
+              aria-label="Back to projects"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-semibold leading-tight text-slate-900 dark:text-white">
+                {project.name}
+              </h1>
+              <p className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-500" />
+                {project.model_type === 'planning' ? 'City Planning' : 'Corporate Campus'}
+                <span className="text-slate-300 dark:text-slate-600">·</span>
+                {combinedLocations.length} buildings
+              </p>
             </div>
           </div>
+          <div className="flex items-center gap-2">
+            <DarkModeToggle />
+            <button
+              onClick={() => setShowAnalytics(!showAnalytics)}
+              className={`btn-ghost ${showAnalytics ? 'btn-ghost-active' : ''}`}
+            >
+              <BarChart3 className="h-4 w-4" />
+              <span className="hidden sm:inline">Analytics</span>
+            </button>
+            {selectedLocation && (
+              <button
+                onClick={() => handleLocationComments(selectedLocation.id)}
+                className="btn-ghost"
+              >
+                <MessageCircle className="h-4 w-4" />
+                <span className="hidden sm:inline">Comments</span>
+              </button>
+            )}
+            <button
+              onClick={() => setShowSectorPanel(!showSectorPanel)}
+              className={`btn-ghost ${showSectorPanel ? 'btn-ghost-active' : ''}`}
+            >
+              <Layers className="h-4 w-4" />
+              <span className="hidden sm:inline">Sectors</span>
+            </button>
+          </div>
         </div>
-      </div>
-      
-      <div className="flex-grow relative">
+      </header>
+
+      <div className="relative flex-grow">
         {showAnalytics ? (
-          <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-6">
-            <div className="max-w-7xl mx-auto">
+          <div className="h-full overflow-y-auto bg-slate-100 p-6 dark:bg-slate-950">
+            <div className="mx-auto max-w-7xl">
               <div className="mb-6">
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Project Analytics</h2>
-                <p className="text-gray-600 dark:text-gray-400">
-                  Detailed insights into sector performance, usage patterns, and city metrics
+                <h2 className="mb-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
+                  Project analytics
+                </h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  Sector performance, usage patterns and city metrics
                 </p>
               </div>
-              <SectorAnalytics 
+              <SectorAnalytics
                 locations={combinedLocations}
                 roads={combinedRoads}
                 activeSectors={activeSectors}
@@ -196,10 +180,15 @@ export function CityViewer() {
           </div>
         ) : (
           <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-            <CityScene locations={combinedLocations} roads={combinedRoads} />
+            {showGeoMap && <MapBackground />}
+            {/* The canvas sits directly in the stack; the old pointer-events
+                none/auto wrapper pair cancelled each other out. */}
+            <div style={{ position: 'absolute', inset: 0 }}>
+              <CityScene locations={combinedLocations} roads={combinedRoads} />
+            </div>
             <CameraUIControls />
             <CityControls />
-            <BuildingPlacement />
+            <AddMenu />
             <LocationInfo />
             <MiniMap
               locations={combinedLocations}
@@ -208,16 +197,19 @@ export function CityViewer() {
             />
           </div>
         )}
-        
+
         {showSectorPanel && (
-          <div className="absolute top-4 right-4 bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg dark:shadow-gray-900/20 w-80 border border-gray-200 dark:border-gray-700 z-10">
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Active Sectors</h3>
+          <div className="panel absolute right-4 top-4 z-20 w-80 p-4">
+            <h3 className="panel-heading mb-3">Active sectors</h3>
             <SectorSelector
               modelType={project.model_type}
               selectedSectors={activeSectors}
               onChange={handleSectorChange}
               compact
             />
+            <p className="mt-3 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+              New buildings you place adopt the first active sector.
+            </p>
           </div>
         )}
       </div>

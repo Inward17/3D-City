@@ -2,58 +2,141 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom slider styles for dark mode */
+/*
+  Design tokens. The viewer is a dark 3D canvas with floating chrome on top, so
+  the panel language is a translucent slate glass rather than opaque white
+  cards — otherwise the UI reads as a separate app bolted over the scene.
+*/
+@layer base {
+  :root {
+    --panel-bg: 255 255 255 / 0.82;
+    --panel-border: 15 23 42 / 0.08;
+    --panel-shadow: 0 12px 32px -12px rgb(15 23 42 / 0.35);
+    --accent: 56 189 248;
+  }
+
+  .dark {
+    --panel-bg: 15 23 42 / 0.78;
+    --panel-border: 148 163 184 / 0.14;
+    --panel-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.7);
+  }
+
+  body {
+    @apply antialiased;
+  }
+}
+
 @layer components {
+  /* Floating glass panel used by every overlay in the 3D viewer. */
+  .panel {
+    background: rgb(var(--panel-bg));
+    border: 1px solid rgb(var(--panel-border));
+    box-shadow: var(--panel-shadow);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    @apply rounded-xl;
+  }
+
+  .panel-heading {
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400;
+  }
+
+  /* Segmented control — used for weather and camera presets. */
+  .segment {
+    @apply flex items-center gap-1 rounded-lg bg-slate-100/80 p-1 dark:bg-slate-800/70;
+  }
+
+  .segment-item {
+    @apply flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium
+           text-slate-600 transition-all duration-150
+           hover:bg-white hover:text-slate-900 hover:shadow-sm
+           dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white;
+  }
+
+  .segment-item-active {
+    @apply bg-white text-slate-900 shadow-sm
+           dark:bg-slate-700 dark:text-white;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 py-2
+           text-sm font-medium text-white shadow-sm transition-colors
+           hover:bg-sky-500 focus:outline-none focus-visible:ring-2
+           focus-visible:ring-sky-400 focus-visible:ring-offset-2
+           disabled:cursor-not-allowed disabled:opacity-50
+           dark:focus-visible:ring-offset-slate-900;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border
+           border-slate-200/80 bg-white/70 px-3.5 py-2 text-sm font-medium
+           text-slate-700 transition-colors hover:bg-white hover:text-slate-900
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400
+           dark:border-slate-700/70 dark:bg-slate-800/60 dark:text-slate-300
+           dark:hover:bg-slate-800 dark:hover:text-white;
+  }
+
+  .btn-ghost-active {
+    @apply border-sky-400/60 bg-sky-50 text-sky-700
+           dark:border-sky-500/50 dark:bg-sky-500/15 dark:text-sky-300;
+  }
+
+  /* Thin scrollbar for the building picker and comment list. */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300/70 dark:bg-slate-600/70;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400 dark:bg-slate-500;
+  }
+}
+
+/* Range slider, restyled to match the panel language. */
+@layer components {
+  .slider {
+    @apply h-1.5 appearance-none rounded-full bg-slate-200 dark:bg-slate-700;
+  }
+
   .slider::-webkit-slider-thumb {
     appearance: none;
-    height: 20px;
-    width: 20px;
-    border-radius: 50%;
-    background: #3b82f6;
+    height: 16px;
+    width: 16px;
+    border-radius: 9999px;
+    background: rgb(var(--accent));
     cursor: pointer;
-    border: 2px solid #ffffff;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgb(15 23 42 / 0.35);
+    transition: transform 0.12s ease;
+  }
+
+  .slider::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
   }
 
   .dark .slider::-webkit-slider-thumb {
-    background: #60a5fa;
-    border-color: #374151;
-  }
-
-  .slider::-webkit-slider-track {
-    height: 8px;
-    cursor: pointer;
-    background: #e5e7eb;
-    border-radius: 4px;
-  }
-
-  .dark .slider::-webkit-slider-track {
-    background: #4b5563;
+    border-color: rgb(30 41 59);
   }
 
   .slider::-moz-range-thumb {
-    height: 20px;
-    width: 20px;
-    border-radius: 50%;
-    background: #3b82f6;
+    height: 16px;
+    width: 16px;
+    border-radius: 9999px;
+    background: rgb(var(--accent));
     cursor: pointer;
-    border: 2px solid #ffffff;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgb(15 23 42 / 0.35);
   }
 
   .dark .slider::-moz-range-thumb {
-    background: #60a5fa;
-    border-color: #374151;
-  }
-
-  .slider::-moz-range-track {
-    height: 8px;
-    cursor: pointer;
-    background: #e5e7eb;
-    border-radius: 4px;
-  }
-
-  .dark .slider::-moz-range-track {
-    background: #4b5563;
+    border-color: rgb(30 41 59);
   }
 }

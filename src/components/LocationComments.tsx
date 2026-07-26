@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { MessageCircle, Plus, X, Edit3, Trash2, User, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -10,6 +10,9 @@ interface Comment {
   timestamp: Date;
   type: 'note' | 'issue' | 'suggestion';
 }
+
+/** Shape as persisted to localStorage: Date is serialised to an ISO string. */
+type StoredComment = Omit<Comment, 'timestamp'> & { timestamp: string };
 
 interface LocationCommentsProps {
   locationId: string;
@@ -35,7 +38,7 @@ export function LocationComments({ locationId, locationName, onClose }: Location
     const savedComments = localStorage.getItem(`comments-${locationId}`);
     if (savedComments) {
       const parsed = JSON.parse(savedComments);
-      setComments(parsed.map((c: any) => ({ ...c, timestamp: new Date(c.timestamp) })));
+      setComments(parsed.map((c: StoredComment) => ({ ...c, timestamp: new Date(c.timestamp) })));
     }
   }, [locationId]);
 

@@ -1,191 +1,139 @@
-import { useRef, useMemo } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
-import { Sky, Stars, Environment, Cloud } from '@react-three/drei';
-import { Bloom, EffectComposer } from '@react-three/postprocessing';
+import { useMemo, useEffect } from 'react';
+import { useThree } from '@react-three/fiber';
+import { Sky, Stars } from '@react-three/drei';
 import { useCityStore } from '../../store/cityStore';
 import * as THREE from 'three';
+
+/**
+ * Sun elevation for a given hour. 6 = sunrise, 12 = noon, 18 = sunset.
+ * Returns a unit-ish vector scaled out to sky distance.
+ */
+function sunVector(timeOfDay: number): [number, number, number] {
+  const angle = ((timeOfDay - 6) / 12) * Math.PI; // 0 at 6am, PI at 6pm
+  return [Math.cos(angle) * 400, Math.sin(angle) * 400, 120];
+}
 
 export function EnvironmentLayer() {
   const { timeOfDay, weather } = useCityStore();
   const { scene } = useThree();
+
   const isNight = timeOfDay < 6 || timeOfDay > 18;
+  // Dawn/dusk band, used to warm the light near the horizon.
+  const isGolden = (timeOfDay >= 6 && timeOfDay < 8) || (timeOfDay > 16 && timeOfDay <= 18);
 
-  // Enhanced sun position calculation
-  const sunPosition = useMemo(() => {
-    const angle = (timeOfDay - 12) * (Math.PI / 12);
-    return [
-      Math.cos(angle) * 100,
-      Math.sin(angle) * 100,
-      0
-    ] as [number, number, number];
-  }, [timeOfDay]);
+  const sunPosition = useMemo(() => sunVector(timeOfDay), [timeOfDay]);
 
-  // Dynamic lighting based on time and weather
+  /*
+    Night used to bottom out around 0.28 ambient with a 0.1 sun and a near-black
+    fog colour, which crushed the whole city into an unreadable silhouette.
+    The floor is now high enough to keep facades and streets legible while
+    still reading clearly as night.
+  */
   const ambientIntensity = useMemo(() => {
-    let base = isNight ? 0.15 : 0.6;
-    if (weather === 'rain') base *= 0.7;
-    if (weather === 'snow') base *= 0.9;
+    let base = isNight ? 0.62 : 0.55;
+    if (weather === 'rain') base *= 0.8;
+    if (weather === 'snow') base *= 1.05;
     return base;
   }, [isNight, weather]);
 
-  const directionalIntensity = useMemo(() => {
-    let base = isNight ? 0.2 : 1.2;
-    if (weather === 'rain') base *= 0.6;
-    if (weather === 'snow') base *= 0.8;
+  const sunIntensity = useMemo(() => {
+    // At night this stands in for moonlight: enough to shape the buildings.
+    let base = isNight ? 0.45 : isGolden ? 1.5 : 2.2;
+    if (weather === 'rain') base *= 0.5;
+    if (weather === 'snow') base *= 0.7;
     return base;
-  }, [isNight, weather]);
+  }, [isNight, isGolden, weather]);
 
-  // Enhanced sky colors based on time of day
-  const skyParams = useMemo(() => {
-    if (isNight) {
-      return {
-        turbidity: 0.1,
-        rayleigh: 0.3,
-        mieCoefficient: 0.005,
-        mieDirectionalG: 0.7,
-      };
-    }
-    
-    const hour = timeOfDay % 24;
-    const isSunrise = hour >= 5 && hour <= 7;
-    const isSunset = hour >= 17 && hour <= 19;
-    
-    if (isSunrise || isSunset) {
-      return {
-        turbidity: 10,
-        rayleigh: 3,
-        mieCoefficient: 0.1,
-        mieDirectionalG: 0.6,
-      };
-    }
-    
-    return {
-      turbidity: 6,
-      rayleigh: 1,
-      mieCoefficient: 0.005,
-      mieDirectionalG: 0.8,
+  const sunColor = isNight ? '#aebde8' : isGolden ? '#ffb375' : '#fff6e8';
+
+  /**
+   * Fog. The previous setup used near=10/far=200 on a city spanning roughly
+   * ±250 units, so everything past the centre block was swallowed by solid fog
+   * — a large part of why the scene looked empty. These ranges are tied to the
+   * actual city extent, and the effect only sets fog once per change instead of
+   * fighting Weather.tsx for it every frame.
+   */
+  useEffect(() => {
+    const config = (() => {
+      if (weather === 'rain') return { color: '#5f7183', near: 260, far: 1500 };
+      if (weather === 'snow') return { color: '#c3cdd8', near: 300, far: 1700 };
+      // A navy horizon rather than near-black: distant buildings still
+      // separate from the sky instead of dissolving into it.
+      if (isNight) return { color: '#1c2947', near: 380, far: 2200 };
+      if (isGolden) return { color: '#d9a878', near: 380, far: 2100 };
+      return { color: '#9fc3d9', near: 420, far: 2400 };
+    })();
+
+    scene.fog = new THREE.Fog(config.color, config.near, config.far);
+    scene.background = new THREE.Color(config.color);
+
+    return () => {
+      scene.fog = null;
     };
-  }, [timeOfDay, isNight]);
-
-  // Dynamic fog based on weather and time
-  const fogParams = useMemo(() => {
-    let color = isNight ? '#001122' : '#ffffff';
-    let near = 10;
-    let far = 200;
-    
-    if (weather === 'rain') {
-      color = '#8ca9c0';
-      near = 5;
-      far = 100;
-    } else if (weather === 'snow') {
-      color = '#e5e7eb';
-      near = 8;
-      far = 150;
-    }
-    
-    return { color, near, far };
-  }, [weather, isNight]);
-
-  // Apply fog to scene
-  useFrame(() => {
-    if (scene.fog) {
-      const fog = scene.fog as THREE.Fog;
-      fog.color.setStyle(fogParams.color);
-      fog.near = fogParams.near;
-      fog.far = fogParams.far;
-    } else {
-      scene.fog = new THREE.Fog(fogParams.color, fogParams.near, fogParams.far);
-    }
-  });
+  }, [scene, weather, isNight, isGolden]);
 
   return (
     <>
-      {/* Enhanced lighting system */}
-      <ambientLight intensity={ambientIntensity} color={isNight ? '#4a5568' : '#ffffff'} />
+      <ambientLight intensity={ambientIntensity} color={isNight ? '#5b6b8f' : '#ffffff'} />
+
+      {/* Key light / sun. Shadow frustum sized to the city rather than the old
+          ±100 box, which clipped shadows off most of the map. */}
       <directionalLight
         position={sunPosition}
-        intensity={directionalIntensity}
-        color={isNight ? '#6366f1' : '#ffffff'}
+        intensity={sunIntensity}
+        color={sunColor}
         castShadow
-        shadow-mapSize={[4096, 4096]}
-        shadow-camera-far={200}
+        shadow-mapSize={[2048, 2048]}
         shadow-camera-near={1}
-        shadow-camera-left={-100}
-        shadow-camera-right={100}
-        shadow-camera-top={100}
-        shadow-camera-bottom={-100}
-        shadow-bias={-0.0001}
-      />
-      
-      {/* Hemisphere light for better ambient lighting */}
-      <hemisphereLight
-        skyColor={isNight ? '#1a202c' : '#87ceeb'}
-        groundColor={isNight ? '#2d3748' : '#8fbc8f'}
-        intensity={ambientIntensity * 0.6}
+        shadow-camera-far={1400}
+        shadow-camera-left={-450}
+        shadow-camera-right={450}
+        shadow-camera-top={450}
+        shadow-camera-bottom={-450}
+        shadow-bias={-0.0005}
+        shadow-normalBias={0.6}
       />
 
-      {/* Point lights for night illumination */}
+      {/* Sky bounce: cool from above, warm ground reflection below. */}
+      <hemisphereLight
+        color={isNight ? '#4a5f8f' : '#bfe0ff'}
+        groundColor={isNight ? '#2a3550' : '#6b7d5a'}
+        intensity={isNight ? 0.75 : 0.7}
+      />
+
+      {/* Subtle fill from the opposite side so shadowed faces aren't dead black. */}
+      <directionalLight
+        position={[-sunPosition[0], 180, -sunPosition[2]]}
+        intensity={isNight ? 0.32 : 0.35}
+        color={isNight ? '#7d92c4' : '#cfe4ff'}
+      />
+
+      {!isNight && weather === 'clear' && (
+        <Sky
+          distance={45000}
+          sunPosition={sunPosition}
+          inclination={0.5}
+          azimuth={0.25}
+          turbidity={isGolden ? 8 : 4}
+          rayleigh={isGolden ? 3 : 1.2}
+        />
+      )}
+
+      {isNight && weather === 'clear' && (
+        <Stars radius={800} depth={120} count={2500} factor={5} saturation={0} fade speed={0.4} />
+      )}
+
+      {/* Street-level sodium glow at night, spread across the map rather than
+          concentrated on the centre block. */}
       {isNight && (
         <>
-          <pointLight position={[20, 15, 20]} intensity={0.5} color="#ffd700" distance={50} />
-          <pointLight position={[-20, 15, -20]} intensity={0.5} color="#ffd700" distance={50} />
-          <pointLight position={[20, 15, -20]} intensity={0.5} color="#ffd700" distance={50} />
-          <pointLight position={[-20, 15, 20]} intensity={0.5} color="#ffd700" distance={50} />
+          <pointLight position={[0, 70, 0]} intensity={2.6} color="#ffca6b" distance={700} decay={1.4} />
+          <pointLight position={[230, 55, 230]} intensity={1.7} color="#ffb45c" distance={560} decay={1.4} />
+          <pointLight position={[-230, 55, -230]} intensity={1.7} color="#ffb45c" distance={560} decay={1.4} />
+          <pointLight position={[230, 55, -230]} intensity={1.4} color="#ffbe72" distance={520} decay={1.4} />
+          <pointLight position={[-230, 55, 230]} intensity={1.4} color="#ffbe72" distance={520} decay={1.4} />
         </>
       )}
-      
-      {/* Dynamic atmospheric effects */}
-      {isNight ? (
-        <>
-          <Stars 
-            radius={300} 
-            depth={100} 
-            count={8000} 
-            factor={6} 
-            fade 
-            speed={0.5}
-          />
-          <Environment preset="night" />
-        </>
-      ) : (
-        <>
-          <Sky 
-            {...skyParams}
-            sunPosition={sunPosition} 
-          />
-          <Environment preset={weather === 'rain' ? 'city' : 'sunset'} />
-          {weather === 'clear' && (
-            <>
-              <Cloud 
-                opacity={0.4}
-                speed={0.2}
-                width={120}
-                depth={2}
-                segments={30}
-                position={[50, 30, 0]}
-              />
-              <Cloud 
-                opacity={0.3}
-                speed={0.3}
-                width={80}
-                depth={1.5}
-                segments={20}
-                position={[-60, 25, 30]}
-              />
-            </>
-          )}
-        </>
-      )}
-      
-      {/* Enhanced post-processing */}
-      <EffectComposer>
-        <Bloom 
-          intensity={isNight ? 2 : 1.2}
-          luminanceThreshold={isNight ? 0.4 : 0.6}
-          luminanceSmoothing={0.9}
-          radius={0.8}
-        />
-      </EffectComposer>
     </>
   );
 }

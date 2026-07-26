@@ -10,27 +10,37 @@ interface InstancedVegetationProps {
 }
 
 // Vegetation configurations
-const VEGETATION_CONFIGS = {
+interface VegetationConfig {
+  instances: number;
+  // Tuples, not number[] — these are spread straight into the R3F geometry
+  // `args` props, which are typed positionally.
+  geometry: [number, number, number];
+  foliageGeometry?: [number, number, number];
+  colors: string[];
+  trunkColor?: string;
+}
+
+const VEGETATION_CONFIGS: Record<string, VegetationConfig> = {
   trees: {
     instances: 200,
-    geometry: [0.1, 1, 0.1], // trunk
-    foliageGeometry: [0.5, 0.5, 0.5], // foliage
+    geometry: [1, 10, 1], // trunk
+    foliageGeometry: [5, 5, 5], // foliage
     colors: ['#2d5a27', '#22c55e', '#16a34a'],
     trunkColor: '#4a3728'
   },
   grass: {
     instances: 1000,
-    geometry: [0.05, 0.3, 0.05],
+    geometry: [0.5, 3, 0.5],
     colors: ['#3a5a40', '#2e7d32', '#4caf50']
   },
   bushes: {
     instances: 150,
-    geometry: [0.3, 0.3, 0.3],
+    geometry: [3, 3, 3],
     colors: ['#22c55e', '#16a34a', '#15803d']
   },
   flowers: {
     instances: 300,
-    geometry: [0.02, 0.1, 0.02],
+    geometry: [0.2, 1, 0.2],
     colors: ['#f472b6', '#ec4899', '#db2777', '#fbbf24', '#f59e0b']
   }
 };
@@ -40,7 +50,7 @@ class SpatialGrid {
   private grid: Map<string, Set<{ x: number; z: number; radius: number }>> = new Map();
   private cellSize: number;
 
-  constructor(cellSize: number = 10) {
+  constructor(cellSize: number = 100) {
     this.cellSize = cellSize;
   }
 
@@ -61,9 +71,9 @@ class SpatialGrid {
   isNearObstacle(x: number, z: number, minDistance: number): boolean {
     const key = this.getKey(x, z);
     const obstacles = this.grid.get(key);
-    
+
     if (!obstacles) return false;
-    
+
     for (const obstacle of obstacles) {
       const dx = x - obstacle.x;
       const dz = z - obstacle.z;
@@ -77,27 +87,35 @@ class SpatialGrid {
 }
 
 // Individual vegetation type component
-function InstancedVegetationType({ 
-  type, 
-  config, 
-  positions, 
+function InstancedVegetationType({
+  type,
+  config,
+  positions,
   scales,
-  rotations 
-}: { 
-  type: string; 
-  config: any; 
-  positions: THREE.Vector3[]; 
+  rotations
+}: {
+  type: string;
+  config: VegetationConfig;
+  positions: THREE.Vector3[];
   scales: number[];
   rotations: number[];
 }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const foliageMeshRef = useRef<THREE.InstancedMesh>(null);
-  const { weather, timeOfDay } = useCityStore();
-  
-  const windIntensity = weather === 'rain' ? 0.15 : 
-                       weather === 'snow' ? 0.08 : 0.05;
+  const { weather } = useCityStore();
 
-  // Update instance matrices
+  const windIntensity = weather === 'rain' ? 0.15 :
+    weather === 'snow' ? 0.08 : 0.05;
+
+  // Pre-allocate temporaries for useFrame
+  const tempMatrix = useMemo(() => new THREE.Matrix4(), []);
+  const tempPosition = useMemo(() => new THREE.Vector3(), []);
+  const tempQuaternion = useMemo(() => new THREE.Quaternion(), []);
+  const tempScale = useMemo(() => new THREE.Vector3(), []);
+  const windAxis = useMemo(() => new THREE.Vector3(1, 0, 0), []);
+  const windQuaternion = useMemo(() => new THREE.Quaternion(), []);
+
+  // Set up initial instance matrices
   useMemo(() => {
     if (meshRef.current && positions.length > 0) {
       const tempMatrix = new THREE.Matrix4();
@@ -109,11 +127,11 @@ function InstancedVegetationType({
         tempPosition.copy(position);
         tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotations[i]);
         tempScale.setScalar(scales[i]);
-        
+
         tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
         meshRef.current!.setMatrixAt(i, tempMatrix);
       });
-      
+
       meshRef.current.instanceMatrix.needsUpdate = true;
       meshRef.current.count = positions.length;
     }
@@ -130,41 +148,40 @@ function InstancedVegetationType({
         tempPosition.y += 1.2; // Lift foliage above trunk
         tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotations[i]);
         tempScale.setScalar(scales[i]);
-        
+
         tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
         foliageMeshRef.current!.setMatrixAt(i, tempMatrix);
       });
-      
+
       foliageMeshRef.current.instanceMatrix.needsUpdate = true;
       foliageMeshRef.current.count = positions.length;
     }
   }, [positions, scales, rotations, type]);
 
   // Wind animation
+  // Wind animation
   useFrame((state) => {
     if (!meshRef.current) return;
-    
+
     const time = state.clock.getElapsedTime();
-    const tempMatrix = new THREE.Matrix4();
-    
+
     for (let i = 0; i < positions.length; i++) {
       meshRef.current.getMatrixAt(i, tempMatrix);
-      
-      const position = new THREE.Vector3();
-      const quaternion = new THREE.Quaternion();
-      const scale = new THREE.Vector3();
-      tempMatrix.decompose(position, quaternion, scale);
-      
+
+      tempMatrix.decompose(tempPosition, tempQuaternion, tempScale);
+
       // Apply wind sway
-      const sway = Math.sin(time + position.x * 0.1) * windIntensity;
-      const windQuaternion = new THREE.Quaternion();
-      windQuaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), sway);
-      quaternion.multiply(windQuaternion);
-      
-      tempMatrix.compose(position, quaternion, scale);
+      const sway = Math.sin(time + tempPosition.x * 0.1) * windIntensity;
+      windQuaternion.setFromAxisAngle(windAxis, sway);
+
+      // Re-apply original base rotation (y-axis) and then wind sway (x-axis)
+      tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotations[i]);
+      tempQuaternion.multiply(windQuaternion);
+
+      tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
       meshRef.current.setMatrixAt(i, tempMatrix);
     }
-    
+
     meshRef.current.instanceMatrix.needsUpdate = true;
   });
 
@@ -172,7 +189,7 @@ function InstancedVegetationType({
   const vegetationColor = useMemo(() => {
     const baseColors = config.colors;
     const baseColor = baseColors[Math.floor(Math.random() * baseColors.length)];
-    
+
     if (weather === 'snow') {
       return new THREE.Color(baseColor).lerp(new THREE.Color('#ffffff'), 0.3);
     } else if (weather === 'rain') {
@@ -186,8 +203,8 @@ function InstancedVegetationType({
   return (
     <group>
       {/* Main vegetation mesh */}
-      <instancedMesh 
-        ref={meshRef} 
+      <instancedMesh
+        ref={meshRef}
         args={[undefined, undefined, config.instances]}
         castShadow
         receiveShadow
@@ -199,7 +216,7 @@ function InstancedVegetationType({
         ) : (
           <sphereGeometry args={config.geometry} />
         )}
-        <meshStandardMaterial 
+        <meshStandardMaterial
           color={type === 'trees' ? config.trunkColor : vegetationColor}
           roughness={0.8}
           metalness={0.1}
@@ -208,14 +225,14 @@ function InstancedVegetationType({
 
       {/* Tree foliage */}
       {type === 'trees' && (
-        <instancedMesh 
-          ref={foliageMeshRef} 
+        <instancedMesh
+          ref={foliageMeshRef}
           args={[undefined, undefined, config.instances]}
           castShadow
           receiveShadow
         >
           <sphereGeometry args={config.foliageGeometry} />
-          <meshStandardMaterial 
+          <meshStandardMaterial
             color={vegetationColor}
             roughness={0.7}
             metalness={0.1}
@@ -230,30 +247,30 @@ export function InstancedVegetation({ locations, roads }: InstancedVegetationPro
   // Create spatial grid for collision detection
   const spatialGrid = useMemo(() => {
     const grid = new SpatialGrid(10);
-    
+
     // Add buildings as obstacles
     locations.forEach(location => {
-      const radius = location.type === 'Park' ? 3 : 
-                    location.type === 'School' || location.type === 'Hospital' ? 4 : 2;
+      const radius = location.type === 'Park' ? 30 :
+        location.type === 'School' || location.type === 'Hospital' ? 40 : 20;
       grid.addObstacle(location.position[0], location.position[2], radius);
     });
-    
+
     // Add roads as obstacles
     roads.forEach(road => {
       const from = locations.find(l => l.id === road.from);
       const to = locations.find(l => l.id === road.to);
       if (!from || !to) return;
-      
+
       const steps = 10;
       for (let i = 0; i <= steps; i++) {
         const t = i / steps;
         const x = from.position[0] + (to.position[0] - from.position[0]) * t;
         const z = from.position[2] + (to.position[2] - from.position[2]) * t;
-        const radius = road.type === 'main' ? 3 : road.type === 'secondary' ? 2 : 1.5;
+        const radius = road.type === 'main' ? 30 : road.type === 'secondary' ? 20 : 15;
         grid.addObstacle(x, z, radius);
       }
     });
-    
+
     return grid;
   }, [locations, roads]);
 
@@ -269,21 +286,20 @@ export function InstancedVegetation({ locations, roads }: InstancedVegetationPro
       const positions: THREE.Vector3[] = [];
       const scales: number[] = [];
       const rotations: number[] = [];
-      const config = VEGETATION_CONFIGS[type];
 
       // Generate around parks with high density
       locations.forEach(location => {
         if (location.type === 'Park') {
           const count = type === 'trees' ? 20 : type === 'grass' ? 100 : type === 'bushes' ? 15 : 30;
-          const radius = 8;
-          
+          const radius = 80;
+
           for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
             const distance = Math.sqrt(Math.random()) * radius;
             const x = location.position[0] + Math.cos(angle) * distance;
             const z = location.position[2] + Math.sin(angle) * distance;
-            
-            if (!spatialGrid.isNearObstacle(x, z, 1)) {
+
+            if (!spatialGrid.isNearObstacle(x, z, 10)) {
               positions.push(new THREE.Vector3(x, 0, z));
               scales.push(0.8 + Math.random() * 0.4);
               rotations.push(Math.random() * Math.PI * 2);
@@ -295,10 +311,10 @@ export function InstancedVegetation({ locations, roads }: InstancedVegetationPro
       // Sparse vegetation in open areas
       const openAreaCount = type === 'trees' ? 50 : type === 'grass' ? 200 : type === 'bushes' ? 30 : 50;
       for (let i = 0; i < openAreaCount; i++) {
-        const x = (Math.random() - 0.5) * 180;
-        const z = (Math.random() - 0.5) * 180;
-        
-        if (!spatialGrid.isNearObstacle(x, z, 3)) {
+        const x = (Math.random() - 0.5) * 1800;
+        const z = (Math.random() - 0.5) * 1800;
+
+        if (!spatialGrid.isNearObstacle(x, z, 30)) {
           positions.push(new THREE.Vector3(x, 0, z));
           scales.push(0.6 + Math.random() * 0.4);
           rotations.push(Math.random() * Math.PI * 2);
