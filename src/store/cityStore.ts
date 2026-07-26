@@ -1,7 +1,5 @@
 import { create } from 'zustand';
 import { Location, Road, ZoneType, BuildingDesign } from '../types/city';
-import { supabase } from '../lib/supabase';
-import { DEMO_MODE } from '../lib/demoMode';
 import { localRepo } from '../lib/localRepo';
 import * as THREE from 'three';
 import type { OrbitControls } from 'three-stdlib';
@@ -202,54 +200,14 @@ export const useCityStore = create<CityStore>((set, get) => ({
   ) => {
     set({ loading: true, currentProjectId: projectId });
     try {
-      if (DEMO_MODE) {
-        // Materialise any active sector's template buildings into storage, so
-        // everything on screen has a real, stable id.
-        const { locations, roads } = modelType && sectors
-          ? await localRepo.ensureSectorLocations(projectId, modelType, sectors)
-          : await localRepo.getCityData(projectId);
-        set({ locations, roads });
-        return;
-      }
-
-      // Fetch locations
-      const { data: locations, error: locationsError } = await supabase
-        .from('locations')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('created_at', { ascending: true });
-
-      if (locationsError) throw locationsError;
-
-      // Fetch roads
-      const { data: roads, error: roadsError } = await supabase
-        .from('roads')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('created_at', { ascending: true });
-
-      if (roadsError) throw roadsError;
-
-      // Transform the data to match our types
-      const transformedLocations = locations.map(loc => ({
-        ...loc,
-        position: loc.position as [number, number, number]
-      }));
-
-      const transformedRoads = roads.map(road => ({
-        id: road.id,
-        from: road.from_location,
-        to: road.to_location,
-        distance: road.distance,
-        type: road.type
-      }));
-
-      set({
-        locations: transformedLocations,
-        roads: transformedRoads
-      });
+      // Materialise any active sector's template buildings into storage, so
+      // everything on screen has a real, stable id.
+      const { locations, roads } = modelType && sectors
+        ? await localRepo.ensureSectorLocations(projectId, modelType, sectors)
+        : await localRepo.getCityData(projectId);
+      set({ locations, roads });
     } catch (error) {
-      console.error('Error fetching project data:', error);
+      console.error('Error loading project data:', error);
     } finally {
       set({ loading: false });
     }
@@ -281,26 +239,7 @@ export const useCityStore = create<CityStore>((set, get) => ({
 
     if (currentProjectId) {
       try {
-        if (DEMO_MODE) {
-          created = await localRepo.addLocation(currentProjectId, draft);
-        } else {
-          const { data, error } = await supabase
-            .from('locations')
-            .insert([{
-              project_id: currentProjectId,
-              name: draft.name,
-              type: draft.type,
-              position: draft.position,
-              description: draft.description,
-              color: draft.color,
-              zone: draft.zone
-            }])
-            .select()
-            .single();
-
-          if (error) throw error;
-          created = { ...data, position: data.position as [number, number, number] };
-        }
+        created = await localRepo.addLocation(currentProjectId, draft);
       } catch (error) {
         console.error('Failed to persist building, keeping it locally:', error);
       }
@@ -327,15 +266,9 @@ export const useCityStore = create<CityStore>((set, get) => ({
     if (!currentProjectId) return;
 
     try {
-      if (DEMO_MODE) {
-        await localRepo.deleteLocation(currentProjectId, locationId);
-      } else {
-        // The roads table cascades on locations delete, so one statement is enough.
-        const { error } = await supabase.from('locations').delete().eq('id', locationId);
-        if (error) throw error;
-      }
+      await localRepo.deleteLocation(currentProjectId, locationId);
     } catch (error) {
-      console.error('Failed to delete building remotely:', error);
+      console.error('Failed to delete building from storage:', error);
     }
   },
 
@@ -361,15 +294,7 @@ export const useCityStore = create<CityStore>((set, get) => ({
     // interaction, so this deliberately doesn't block or revert the UI.
     void (async () => {
       try {
-        if (DEMO_MODE) {
-          await localRepo.updateLocation(currentProjectId, locationId, { design: nextDesign });
-        } else {
-          const { error } = await supabase
-            .from('locations')
-            .update({ design: nextDesign })
-            .eq('id', locationId);
-          if (error) throw error;
-        }
+        await localRepo.updateLocation(currentProjectId, locationId, { design: nextDesign });
       } catch (error) {
         console.error('Failed to persist building design:', error);
       }
@@ -429,30 +354,7 @@ export const useCityStore = create<CityStore>((set, get) => ({
 
     if (currentProjectId) {
       try {
-        if (DEMO_MODE) {
-          created = await localRepo.addRoad(currentProjectId, draft);
-        } else {
-          const { data, error } = await supabase
-            .from('roads')
-            .insert([{
-              project_id: currentProjectId,
-              from_location: draft.from,
-              to_location: draft.to,
-              distance: draft.distance,
-              type: draft.type
-            }])
-            .select()
-            .single();
-
-          if (error) throw error;
-          created = {
-            id: data.id,
-            from: data.from_location,
-            to: data.to_location,
-            distance: data.distance,
-            type: data.type
-          };
-        }
+        created = await localRepo.addRoad(currentProjectId, draft);
       } catch (error) {
         console.error('Failed to persist road, keeping it locally:', error);
       }

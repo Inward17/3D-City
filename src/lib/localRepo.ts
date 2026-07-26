@@ -1,17 +1,30 @@
 /**
- * localStorage-backed stand-in for the Supabase tables, used when DEMO_MODE is
- * on. Mirrors just the shapes the stores actually read/write: projects,
- * locations and roads, each keyed by project id.
+ * Browser-local storage for the whole app: projects, locations and roads, each
+ * keyed by project id.
  *
- * Everything is synchronous under the hood but exposed as promises so the store
- * call sites are identical to the Supabase ones.
+ * This is the only persistence layer. The app previously also carried a
+ * Supabase client behind a DEMO_MODE flag, but that path required env vars that
+ * only existed on the developer's machine — the deployed build threw
+ * "Missing VITE_SUPABASE_URL environment variable" at module load and never
+ * started. Since the flag had been pinned to local storage throughout, the
+ * remote path was removed rather than repaired.
+ *
+ * Everything is synchronous under the hood but exposed as promises, so swapping
+ * in a real backend later means changing this file and nothing else.
  */
 import { Location, Road } from '../types/city';
 import { cityPlanningData } from '../data/cityPlanningData';
 import { corporateCampusData } from '../data/corporateCampusData';
-import { DEMO_USER_ID } from './demoMode';
 
 const STORAGE_KEY = 'city3d.demo.v1';
+
+/**
+ * Owner recorded on locally created projects.
+ *
+ * The app has no accounts: everything lives in this browser. The field is kept
+ * so stored projects still carry an owner if a real backend is added later.
+ */
+export const LOCAL_USER_ID = 'local-user';
 
 export interface StoredProject {
   id: string;
@@ -78,7 +91,7 @@ const newId = () =>
 
 /**
  * Seeds a project's locations/roads from the matching template, filtered to the
- * sectors the user picked — same rule the Supabase createProject path uses.
+ * sectors the user picked.
  */
 function seedFromTemplate(project: StoredProject) {
   const template =
@@ -123,7 +136,7 @@ export const localRepo = {
     const db = read();
     const project: StoredProject = {
       ...input,
-      user_id: input.user_id ?? DEMO_USER_ID,
+      user_id: input.user_id ?? LOCAL_USER_ID,
       id: newId(),
       created_at: new Date().toISOString()
     };

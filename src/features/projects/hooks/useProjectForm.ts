@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useProjectStore } from '../../../store/projectStore';
-import { useAuthStore } from '../../../store/authStore';
 import { cityPlanningData } from '../../../data/cityPlanningData';
 import { corporateCampusData } from '../../../data/corporateCampusData';
-import { DEMO_MODE, DEMO_USER_ID } from '../../../lib/demoMode';
+import { LOCAL_USER_ID } from '../../../lib/localRepo';
 
 export const DEFAULT_MAP_VIEW = {
     center_lat: 18.5204, // Pune
@@ -29,7 +28,6 @@ export interface ProjectFormData {
 export function useProjectForm(mode: 'create' | 'edit', initialData?: ProjectFormData) {
     const navigate = useNavigate();
     const { createProject, updateProject } = useProjectStore();
-    const { session } = useAuthStore();
 
     const [formData, setFormData] = useState({
         name: initialData?.name || '',
@@ -91,10 +89,6 @@ export function useProjectForm(mode: 'create' | 'edit', initialData?: ProjectFor
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!DEMO_MODE && !session?.user) {
-            setError('User session not found');
-            return;
-        }
         setLoading(true);
         setError('');
 
@@ -102,7 +96,7 @@ export function useProjectForm(mode: 'create' | 'edit', initialData?: ProjectFor
             if (mode === 'create') {
                 const projectId = await createProject({
                     ...formData,
-                    user_id: session?.user?.id ?? DEMO_USER_ID
+                    user_id: LOCAL_USER_ID
                 });
                 navigate(`/project/${projectId}`);
             } else {
