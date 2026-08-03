@@ -39,10 +39,28 @@ const PARK_VISITORS_PER_HECTARE = 60;
 /**
  * Normalised occupancy by hour (0..1) for each building type. Deterministic;
  * shared with the per-building chart in LocationInfo so the two agree.
+ *
+ * @param zone the building's land use. Needed because housing is not a distinct
+ *   type — an apartment block is a `Building` in a `residential` zone, and
+ *   without this it would follow the office curve: filling by day and standing
+ *   empty overnight. That also flattened the trip model, since homes and
+ *   workplaces filled and emptied in step and no one had a reason to travel.
  */
-export function occupancyFactor(type: Location['type'], hour: number): number {
+export function occupancyFactor(
+  type: Location['type'],
+  hour: number,
+  zone?: string
+): number {
   const bell = (peak: number, width: number) =>
     Math.max(0, 1 - Math.abs(hour - peak) / width);
+
+  // Somewhere people sleep, whatever the building is called.
+  if (zone === 'residential' && type !== 'Hotel') {
+    // Fullest overnight, emptiest mid-morning through the working day.
+    return hour >= 22 || hour <= 6 ? 0.9
+      : hour >= 9 && hour <= 17 ? 0.25
+        : 0.55;
+  }
 
   switch (type) {
     case 'Building':
@@ -165,7 +183,7 @@ export function computeCityMetrics(
 
     const capacity = inSector.reduce((sum, l) => sum + buildingCapacity(l), 0);
     const occupancyNow = inSector.reduce(
-      (sum, l) => sum + buildingCapacity(l) * occupancyFactor(l.type, hour),
+      (sum, l) => sum + buildingCapacity(l) * occupancyFactor(l.type, hour, l.zone),
       0
     );
 
@@ -198,13 +216,13 @@ export function computeCityMetrics(
   const hourlyData = Array.from({ length: 24 }, (_, h) => ({
     hour: `${h.toString().padStart(2, '0')}:00`,
     occupancy: Math.round(
-      locations.reduce((sum, l) => sum + buildingCapacity(l) * occupancyFactor(l.type, h), 0)
+      locations.reduce((sum, l) => sum + buildingCapacity(l) * occupancyFactor(l.type, h, l.zone), 0)
     )
   }));
 
   const totalCapacity = locations.reduce((sum, l) => sum + buildingCapacity(l), 0);
   const occupancyNow = locations.reduce(
-    (sum, l) => sum + buildingCapacity(l) * occupancyFactor(l.type, hour),
+    (sum, l) => sum + buildingCapacity(l) * occupancyFactor(l.type, hour, l.zone),
     0
   );
   const networkLength = roads.reduce((sum, r) => sum + (r.distance || 0), 0);

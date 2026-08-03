@@ -11,7 +11,9 @@ import { MiniMap } from './MiniMap';
 import { DarkModeToggle } from './DarkModeToggle';
 import { MapBackground } from './MapBackground';
 import { CameraUIControls } from './CameraUIControls';
-import { ArrowLeft, Loader2, Layers, BarChart3, MessageCircle } from 'lucide-react';
+import { ArrowLeft, Loader2, Layers, BarChart3, MessageCircle, GitFork } from 'lucide-react';
+import { IntersectionPanel } from './IntersectionPanel';
+import { IntersectionInfo } from './IntersectionInfo';
 import { useProjectStore } from '../store/projectStore';
 import { useCityStore } from '../store/cityStore';
 import { selectVisibleCity } from '../utils/selectVisibleCity';
@@ -30,6 +32,7 @@ export function CityViewer() {
     setActiveSectors
   } = useCityStore();
   const [showSectorPanel, setShowSectorPanel] = useState(false);
+  const [showIntersections, setShowIntersections] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [commentsLocationId, setCommentsLocationId] = useState<string | null>(null);
@@ -148,7 +151,14 @@ export function CityViewer() {
               </button>
             )}
             <button
-              onClick={() => setShowSectorPanel(!showSectorPanel)}
+              onClick={() => { setShowIntersections(!showIntersections); setShowSectorPanel(false); }}
+              className={`btn-ghost ${showIntersections ? 'btn-ghost-active' : ''}`}
+            >
+              <GitFork className="h-4 w-4" />
+              <span className="hidden sm:inline">Intersections</span>
+            </button>
+            <button
+              onClick={() => { setShowSectorPanel(!showSectorPanel); setShowIntersections(false); }}
               className={`btn-ghost ${showSectorPanel ? 'btn-ghost-active' : ''}`}
             >
               <Layers className="h-4 w-4" />
@@ -190,12 +200,17 @@ export function CityViewer() {
             <CityControls />
             <AddMenu />
             <LocationInfo />
+            <IntersectionInfo />
             <MiniMap
               locations={combinedLocations}
               roads={combinedRoads}
               viewPosition={[0, 20, 0]}
             />
           </div>
+        )}
+
+        {showIntersections && !showAnalytics && (
+          <IntersectionPanel onClose={() => setShowIntersections(false)} />
         )}
 
         {showSectorPanel && (

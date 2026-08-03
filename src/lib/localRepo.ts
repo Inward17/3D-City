@@ -15,6 +15,7 @@
 import { Location, Road } from '../types/city';
 import { cityPlanningData } from '../data/cityPlanningData';
 import { corporateCampusData } from '../data/corporateCampusData';
+import type { CrossingStyle } from '../utils/roadCrossings';
 
 const STORAGE_KEY = 'city3d.demo.v1';
 
@@ -52,13 +53,16 @@ interface DemoDatabase {
    * deleted the next time the project was opened.
    */
   seededSectors: Record<string, string[]>;
+  /** How each road crossing is resolved, per project, keyed by crossingKey(). */
+  crossingStyles: Record<string, Record<string, CrossingStyle>>;
 }
 
 const emptyDb = (): DemoDatabase => ({
   projects: [],
   locations: {},
   roads: {},
-  seededSectors: {}
+  seededSectors: {},
+  crossingStyles: {}
 });
 
 function read(): DemoDatabase {
@@ -70,7 +74,8 @@ function read(): DemoDatabase {
       projects: parsed.projects ?? [],
       locations: parsed.locations ?? {},
       roads: parsed.roads ?? {},
-      seededSectors: parsed.seededSectors ?? {}
+      seededSectors: parsed.seededSectors ?? {},
+      crossingStyles: parsed.crossingStyles ?? {}
     };
   } catch {
     // Corrupted or unavailable storage shouldn't hard-fail the app.
@@ -163,6 +168,7 @@ export const localRepo = {
     delete db.locations[id];
     delete db.roads[id];
     delete db.seededSectors[id];
+    delete db.crossingStyles[id];
     write(db);
   },
 
@@ -273,6 +279,19 @@ export const localRepo = {
     db.roads[projectId] = [...(db.roads[projectId] ?? []), created];
     write(db);
     return created;
+  },
+
+  async getCrossingStyles(projectId: string): Promise<Record<string, CrossingStyle>> {
+    return read().crossingStyles[projectId] ?? {};
+  },
+
+  async setCrossingStyles(
+    projectId: string,
+    styles: Record<string, CrossingStyle>
+  ): Promise<void> {
+    const db = read();
+    db.crossingStyles[projectId] = styles;
+    write(db);
   },
 
   async updateLocation(

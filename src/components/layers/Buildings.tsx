@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ThreeEvent } from '@react-three/fiber';
 import { useCityStore } from '../../store/cityStore';
+import { groundLevelFor } from '../../utils/terrain';
+import { createTerrainDisc } from '../../utils/roadGeometry';
 import { Location } from '../../types/city';
 import { InstancedWindows } from '../optimized/InstancedWindows';
 import { InstancedTrees } from '../optimized/InstancedTrees';
@@ -61,7 +63,7 @@ function Building({ location }: { location: Location }) {
   const emissiveColor = isRouteStart ? '#34d399' : isSelected ? '#38bdf8' : '#7dd3fc';
 
   return (
-    <group position={[location.position[0], location.position[1], location.position[2]]}>
+    <group position={[location.position[0], groundLevelFor(location), location.position[2]]}>
       {/* Plinth: a slightly wider slab grounds the building instead of letting
           it float straight out of the grass. */}
       <mesh position={[0, 0.4, 0]} receiveShadow castShadow>
@@ -165,11 +167,25 @@ function Park({ location }: { location: Location }) {
   const { selectedLocation, setSelectedLocation, isPlacingBuilding } = useCityStore();
   const isSelected = selectedLocation?.id === location.id;
 
+  const level = groundLevelFor(location);
+
+  /*
+    A park is open ground, so it follows the terrain rather than standing on a
+    levelled platform the way a building does. Drawn as flat circles it missed
+    the real surface by over a metre at the rim.
+  */
+  const { lawn, path } = useMemo(() => ({
+    lawn: createTerrainDisc(location.position[0], location.position[2], 0, 30, level),
+    path: createTerrainDisc(location.position[0], location.position[2], 30, 32.5, level)
+  }), [location.position, level]);
+
+  useEffect(() => () => { lawn.dispose(); path.dispose(); }, [lawn, path]);
+
   return (
-    <group position={[location.position[0], location.position[1], location.position[2]]}>
+    <group position={[location.position[0], level, location.position[2]]}>
       <mesh
+        geometry={lawn}
         position={[0, 0.12, 0]}
-        rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow
         onClick={(e) => {
           if (isPlacingBuilding) return;
@@ -177,7 +193,6 @@ function Park({ location }: { location: Location }) {
           setSelectedLocation(location);
         }}
       >
-        <circleGeometry args={[30, 48]} />
         <meshStandardMaterial
           color={isSelected ? '#4ade80' : '#3f8f52'}
           roughness={0.95}
@@ -186,8 +201,7 @@ function Park({ location }: { location: Location }) {
         />
       </mesh>
       {/* Path ring around the lawn */}
-      <mesh position={[0, 0.16, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[30, 32.5, 48]} />
+      <mesh geometry={path} position={[0, 0.16, 0]}>
         <meshStandardMaterial color="#8b7a5e" roughness={1} side={THREE.DoubleSide} />
       </mesh>
     </group>

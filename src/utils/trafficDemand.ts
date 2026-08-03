@@ -65,7 +65,7 @@ export function computeTrafficDemand(
   const hour = Math.floor(timeOfDay);
 
   const occupants = locations.reduce(
-    (sum, l) => sum + buildingCapacity(l) * occupancyFactor(l.type, hour),
+    (sum, l) => sum + buildingCapacity(l) * occupancyFactor(l.type, hour, l.zone),
     0
   );
 

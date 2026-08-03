@@ -3,6 +3,7 @@ import { Location } from '../../types/city';
 import { hashUnit } from '../../utils/buildingDimensions';
 import { PARK_TREE } from '../../utils/scale';
 import * as THREE from 'three';
+import { elevationAt } from '../../utils/terrain';
 
 interface InstancedTreesProps {
   locations: Location[];
@@ -36,12 +37,14 @@ function generateTreeInstances(parkLocation: Location): TreeInstance[] {
     // Uniform scale around a real tree size; 0.85x - 1.25x of the reference.
     const scale = 0.85 + r2 * 0.4;
 
+    const x = parkLocation.position[0] + Math.cos(angle) * radius;
+    const z = parkLocation.position[2] + Math.sin(angle) * radius;
+
     trees.push({
-      position: new THREE.Vector3(
-        parkLocation.position[0] + Math.cos(angle) * radius,
-        parkLocation.position[1],
-        parkLocation.position[2] + Math.sin(angle) * radius
-      ),
+      // Each tree stands on the ground beneath it. Taking the park's own level
+      // instead left trees hanging in the air on one side of a slope and buried
+      // on the other.
+      position: new THREE.Vector3(x, elevationAt(x, z), z),
       scale: new THREE.Vector3(scale, scale, scale)
     });
   }

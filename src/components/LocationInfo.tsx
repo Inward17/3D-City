@@ -41,7 +41,7 @@ function generateOccupancyData(location: Location, currentTime: number): Occupan
   const capacity = buildingCapacity(location);
 
   return Array.from({ length: 24 }, (_, hour) => {
-    const factor = occupancyFactor(location.type, hour);
+    const factor = occupancyFactor(location.type, hour, location.zone);
     return {
       hour: `${hour.toString().padStart(2, '0')}:00`,
       people: Math.round(capacity * factor),

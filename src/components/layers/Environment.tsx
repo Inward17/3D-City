@@ -2,26 +2,45 @@ import { useMemo, useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Sky, Stars } from '@react-three/drei';
 import { useCityStore } from '../../store/cityStore';
+import { sunPosition } from '../../utils/solar';
 import * as THREE from 'three';
 
 /**
  * Sun elevation for a given hour. 6 = sunrise, 12 = noon, 18 = sunset.
  * Returns a unit-ish vector scaled out to sky distance.
  */
-function sunVector(timeOfDay: number): [number, number, number] {
-  const angle = ((timeOfDay - 6) / 12) * Math.PI; // 0 at 6am, PI at 6pm
-  return [Math.cos(angle) * 400, Math.sin(angle) * 400, 120];
-}
+/** How far out the light is placed; only the direction carries meaning. */
+const SUN_DISTANCE = 400;
 
 export function EnvironmentLayer() {
-  const { timeOfDay, weather } = useCityStore();
+  const { timeOfDay, weather, latitude, dayOfYear } = useCityStore();
   const { scene } = useThree();
 
-  const isNight = timeOfDay < 6 || timeOfDay > 18;
-  // Dawn/dusk band, used to warm the light near the horizon.
-  const isGolden = (timeOfDay >= 6 && timeOfDay < 8) || (timeOfDay > 16 && timeOfDay <= 18);
+  /*
+    The real sun for this site and date, rather than a fixed east-west arc that
+    put noon overhead everywhere on Earth on every day of the year. Sunrise and
+    sunset now move with the season and the latitude, so the shadows a building
+    casts are the ones it will actually cast.
+  */
+  const sun = useMemo(
+    () => sunPosition(latitude, dayOfYear, timeOfDay),
+    [latitude, dayOfYear, timeOfDay]
+  );
 
-  const sunPosition = useMemo(() => sunVector(timeOfDay), [timeOfDay]);
+  const isNight = !sun.isUp;
+  // Low sun: warm light and long shadows, whatever the clock says.
+  const isGolden = sun.isUp && sun.elevation < 12;
+
+  const sunPositionVector = useMemo<[number, number, number]>(
+    () => [
+      sun.direction[0] * SUN_DISTANCE,
+      // Keep the light above the horizon after dark so the moonlight stand-in
+      // still shapes the buildings instead of lighting them from underneath.
+      Math.max(sun.direction[1], 0.25) * SUN_DISTANCE,
+      sun.direction[2] * SUN_DISTANCE
+    ],
+    [sun]
+  );
 
   /*
     Night used to bottom out around 0.28 ambient with a 0.1 sun and a near-black
@@ -79,7 +98,7 @@ export function EnvironmentLayer() {
       {/* Key light / sun. Shadow frustum sized to the city rather than the old
           ±100 box, which clipped shadows off most of the map. */}
       <directionalLight
-        position={sunPosition}
+        position={sunPositionVector}
         intensity={sunIntensity}
         color={sunColor}
         castShadow
@@ -103,7 +122,7 @@ export function EnvironmentLayer() {
 
       {/* Subtle fill from the opposite side so shadowed faces aren't dead black. */}
       <directionalLight
-        position={[-sunPosition[0], 180, -sunPosition[2]]}
+        position={[-sunPositionVector[0], 180, -sunPositionVector[2]]}
         intensity={isNight ? 0.32 : 0.35}
         color={isNight ? '#7d92c4' : '#cfe4ff'}
       />
@@ -111,7 +130,7 @@ export function EnvironmentLayer() {
       {!isNight && weather === 'clear' && (
         <Sky
           distance={45000}
-          sunPosition={sunPosition}
+          sunPosition={sunPositionVector}
           inclination={0.5}
           azimuth={0.25}
           turbidity={isGolden ? 8 : 4}

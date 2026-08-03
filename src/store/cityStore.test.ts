@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { useCityStore } from './cityStore';
 import { localRepo } from '../lib/localRepo';
 import { Location, Road } from '../types/city';
+import { getEffectiveDimensions } from '../utils/buildingDimensions';
 
 const loc = (over: Partial<Location> = {}): Location => ({
   id: 'l1',
@@ -272,5 +273,70 @@ describe('camera preset intent', () => {
 
   it('does not throw when no controller is registered', () => {
     expect(() => useCityStore.getState().flyToCameraLocation([0, 0, 0])).not.toThrow();
+  });
+});
+
+describe('framing a selected building', () => {
+  /** Where the camera and its orbit target end up when `location` is selected. */
+  function frame(location: Location) {
+    let seen: { position: number[]; offset?: number[] } | null = null;
+    useCityStore.getState().registerCameraController({
+      animateToPreset: () => {},
+      flyToLocation: (position, offset) => { seen = { position, offset }; }
+    });
+
+    useCityStore.getState().flyToLocation(location);
+    useCityStore.getState().registerCameraController(null);
+
+    const { position, offset } = seen!;
+    return {
+      target: position,
+      // Camera sits at target + offset; only the horizontal reach matters for
+      // "am I inside the building".
+      horizontal: Math.hypot(offset![0], offset![2]),
+      height: position[1] + offset![1]
+    };
+  }
+
+  const building = (over: Partial<Location> = {}): Location => ({
+    id: 'b', name: 'b', type: 'Building', position: [0, 0, 0],
+    description: '', zone: 'commercial', ...over
+  });
+
+  it('stands outside the footprint rather than inside it', () => {
+    // The old fixed [10, 10, 10] offset sat well within a 40 m-wide tower.
+    for (const width of [8, 20, 40, 80]) {
+      const b = building({ design: { width, depth: width } });
+      const { horizontal } = frame(b);
+      expect(horizontal, `camera inside a ${width} m building`)
+        .toBeGreaterThan(Math.hypot(width, width) / 2);
+    }
+  });
+
+  it('backs off further for a taller building', () => {
+    const low = frame(building({ design: { floors: 1 } })).horizontal;
+    const tall = frame(building({ design: { floors: 40 } })).horizontal;
+    expect(tall).toBeGreaterThan(low);
+  });
+
+  it('looks at the middle of the building, not the ground', () => {
+    const b = building({ design: { floors: 20 } });
+    const { target } = frame(b);
+    expect(target[1]).toBeGreaterThan(0);
+    expect(target[1]).toBeLessThan(getEffectiveDimensions(b).height);
+  });
+
+  it('keeps the camera above the target', () => {
+    expect(frame(building({ design: { floors: 30 } })).height)
+      .toBeGreaterThan(0);
+  });
+
+  it('stays within the orbit controls’ range', () => {
+    // controls.minDistance = 8, maxDistance = 1600.
+    for (const floors of [1, 60]) {
+      const { horizontal } = frame(building({ design: { floors } }));
+      expect(horizontal).toBeGreaterThan(8);
+      expect(horizontal).toBeLessThan(1600);
+    }
   });
 });

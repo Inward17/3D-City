@@ -5,6 +5,11 @@ import {
   STREET_LAMP, STREET_TREE, BENCH, ROAD_WIDTH, PAVEMENT_WIDTH
 } from '../../utils/scale';
 import * as THREE from 'three';
+import { placeOnGround } from '../../utils/terrain';
+import { sampleAlongPath, surfaceHeightBeside } from '../../utils/roadGeometry';
+import { distanceToNearestBuilding } from '../../utils/buildingCollision';
+import { RoadNetwork } from '../../utils/roadNetwork';
+import { useRoadNetwork } from '../../hooks/useRoadNetwork';
 
 interface InstancedStreetAssetsProps {
   locations: Location[];
@@ -27,7 +32,14 @@ type AssetType = 'streetLamps' | 'trees' | 'benches';
 */
 const ASSETS: Record<AssetType, {
   spacing: number;
-  roadOffset: number;
+  /**
+   * How far beyond the kerb the item stands, as a fraction of the pavement.
+   *
+   * Was a fixed distance worked out from the *secondary* carriageway, applied
+   * to every road — so on a main road, which is half again as wide, the lamps
+   * and benches stood in the running lane.
+   */
+  kerbFactor: number;
   /** Height of the primary mesh's centre above ground. */
   primaryY: number;
   /** Height of the secondary mesh's centre, when the asset has one. */
@@ -35,19 +47,19 @@ const ASSETS: Record<AssetType, {
 }> = {
   streetLamps: {
     spacing: 30,
-    roadOffset: ROAD_WIDTH.secondary / 2 + PAVEMENT_WIDTH * 0.5,
+    kerbFactor: 0.5,
     primaryY: STREET_LAMP.height / 2,
     secondaryY: STREET_LAMP.height + STREET_LAMP.lanternRadius * 0.5
   },
   trees: {
     spacing: 18,
-    roadOffset: ROAD_WIDTH.secondary / 2 + PAVEMENT_WIDTH * 1.4,
+    kerbFactor: 1.4,
     primaryY: STREET_TREE.trunkHeight / 2,
     secondaryY: STREET_TREE.trunkHeight + STREET_TREE.canopyRadius * 0.75
   },
   benches: {
     spacing: 45,
-    roadOffset: ROAD_WIDTH.secondary / 2 + PAVEMENT_WIDTH * 0.6,
+    kerbFactor: 0.6,
     primaryY: BENCH.seatHeight
   }
 };
@@ -58,61 +70,51 @@ function jitter(i: number, salt: number): number {
   return n - Math.floor(n);
 }
 
-// Generate positions along roads
+/**
+ * Place furniture along the roads, on the pavement.
+ *
+ * Positions come from the *routed* centre-line, not from the straight line
+ * between the two buildings a road connects. Roads bend around buildings, so
+ * on anything but a dead-straight link the old spacing strung lamps and
+ * benches out across open ground on the chord while the carriageway curved
+ * away from them. Taking the path also means the perpendicular turns with the
+ * road, so the kerb offset stays a kerb offset around a bend.
+ */
 function generateAssetPositions(
-  roads: Road[],
+  network: RoadNetwork,
   locations: Location[],
   spacing: number,
-  offset: number
+  kerbFactor: number
 ) {
   const positions: THREE.Vector3[] = [];
   const rotations: number[] = [];
 
-  roads.forEach(road => {
-    const from = locations.find(l => l.id === road.from);
-    const to = locations.find(l => l.id === road.to);
-    if (!from || !to) return;
+  for (const entry of network.roads) {
+    // Measured from this road's own kerb, not from a one-size-fits-all figure.
+    const offset =
+      ROAD_WIDTH[entry.road.type] / 2 + PAVEMENT_WIDTH * kerbFactor;
 
-    const roadLength = Math.sqrt(
-      Math.pow(to.position[0] - from.position[0], 2) +
-      Math.pow(to.position[2] - from.position[2], 2)
-    );
+    for (const { point, tangent } of sampleAlongPath(entry.path, spacing)) {
+      // Left-hand normal in plan; the two sides are the two pavements.
+      const perpendicular = new THREE.Vector2(-tangent.y, tangent.x);
 
-    const itemCount = Math.floor(roadLength / spacing);
-    if (itemCount <= 0) return;
+      for (const side of [1, -1]) {
+        const x = point.x + perpendicular.x * offset * side;
+        const z = point.z + perpendicular.y * offset * side;
 
-    const direction = new THREE.Vector2(
-      to.position[0] - from.position[0],
-      to.position[2] - from.position[2]
-    ).normalize();
-    const perpendicular = new THREE.Vector2(-direction.y, direction.x);
+        /*
+          Keep out of the buildings. Measured against real footprints rather
+          than the old flat 18 m radius, which was smaller than the half-
+          diagonal of anything above about 25 m across — so furniture stood
+          inside the larger buildings.
+        */
+        if (distanceToNearestBuilding(x, z, locations) < PAVEMENT_WIDTH) continue;
 
-    for (let i = 1; i <= itemCount; i++) {
-      const t = i / (itemCount + 1);
-      const baseX = from.position[0] + (to.position[0] - from.position[0]) * t;
-      const baseZ = from.position[2] + (to.position[2] - from.position[2]) * t;
-
-      [1, -1].forEach(side => {
-        const finalX = baseX + perpendicular.x * offset * side;
-        const finalZ = baseZ + perpendicular.y * offset * side;
-
-        // Keep clear of building footprints. 18 m covers the largest default
-        // half-footprint (30 m wide) plus a margin.
-        const isClear = locations.every(loc => {
-          const dist = Math.sqrt(
-            Math.pow(finalX - loc.position[0], 2) +
-            Math.pow(finalZ - loc.position[2], 2)
-          );
-          return dist > 18;
-        });
-
-        if (isClear) {
-          positions.push(new THREE.Vector3(finalX, 0, finalZ));
-          rotations.push(Math.atan2(direction.x, direction.y) + (side > 0 ? 0 : Math.PI));
-        }
-      });
+        positions.push(new THREE.Vector3(x, surfaceHeightBeside(point, x, z), z));
+        rotations.push(Math.atan2(tangent.x, tangent.y) + (side > 0 ? 0 : Math.PI));
+      }
     }
-  });
+  }
 
   return { positions, rotations };
 }
@@ -145,8 +147,9 @@ function InstancedAsset({
 
     positions.forEach((position, i) => {
       // Geometry is centred on its own origin, so the height offset comes from
-      // the spec rather than the old hard-coded +6 / +12 / +32 magic numbers.
-      tempPosition.set(position.x, spec.primaryY, position.z);
+      // the spec rather than the old hard-coded +6 / +12 / +32 magic numbers —
+      // measured up from the ground the item stands on.
+      placeOnGround(position, spec.primaryY, tempPosition);
       tempQuaternion.setFromAxisAngle(up, rotations[i]);
       tempScale.setScalar(0.92 + jitter(i, 1) * 0.16);
 
@@ -159,7 +162,7 @@ function InstancedAsset({
 
     if (secondaryMeshRef.current && spec.secondaryY !== undefined) {
       positions.forEach((position, i) => {
-        tempPosition.set(position.x, spec.secondaryY!, position.z);
+        placeOnGround(position, spec.secondaryY!, tempPosition);
         tempQuaternion.setFromAxisAngle(up, rotations[i]);
         // Canopies vary more than poles; lanterns stay uniform.
         tempScale.setScalar(
@@ -232,15 +235,19 @@ function InstancedAsset({
 }
 
 export function InstancedStreetAssets({ locations, roads }: InstancedStreetAssetsProps) {
+  // Same routed network the carriageways are drawn from, so the pavement
+  // furniture follows exactly the road the user can see.
+  const network = useRoadNetwork(locations, roads);
+
   const assetData = useMemo(() => {
     const out = {} as Record<AssetType, { positions: THREE.Vector3[]; rotations: number[] }>;
     (Object.keys(ASSETS) as AssetType[]).forEach(type => {
       out[type] = generateAssetPositions(
-        roads, locations, ASSETS[type].spacing, ASSETS[type].roadOffset
+        network, locations, ASSETS[type].spacing, ASSETS[type].kerbFactor
       );
     });
     return out;
-  }, [roads, locations]);
+  }, [network, locations]);
 
   return (
     <group name="instanced-street-assets">

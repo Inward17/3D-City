@@ -229,6 +229,78 @@ export const cityPlanningData: CityData = {
       to: 'trans2',
       distance: 2000,
       type: 'main'
+    },
+
+    /*
+      Orbital route.
+
+      Without it this layout is a pure star: every road ran to City Hall, so the
+      only path between any two districts was through the middle of the city and
+      every vehicle in the model funnelled across one junction. Real networks are
+      radial *and* orbital — you drive round, not through, unless the centre is
+      actually where you are going.
+
+      It also gives the assignment a genuine choice of route, which a tree never
+      can: with one path per journey, congestion cannot redistribute anything.
+    */
+    {
+      id: 'r13',
+      from: 'edu1',
+      to: 'health1',
+      distance: 3000,
+      type: 'main'
+    },
+    {
+      id: 'r14',
+      from: 'health1',
+      to: 'trans1',
+      distance: 1800,
+      type: 'main'
+    },
+    {
+      id: 'r15',
+      from: 'trans1',
+      to: 'com1',
+      distance: 1800,
+      type: 'main'
+    },
+    {
+      id: 'r16',
+      from: 'com1',
+      to: 'green1',
+      distance: 1600,
+      type: 'secondary'
+    },
+    {
+      id: 'r17',
+      from: 'green1',
+      to: 'res1',
+      distance: 1600,
+      type: 'secondary'
+    },
+    {
+      id: 'r18',
+      from: 'res1',
+      to: 'edu1',
+      distance: 3000,
+      type: 'main'
+    },
+
+    // Police Headquarters had no road at all, so it generated no trips and
+    // counted as isolated in the analytics.
+    {
+      id: 'r19',
+      from: 'gov1',
+      to: 'gov2',
+      distance: 600,
+      type: 'secondary'
+    },
+    {
+      id: 'r20',
+      from: 'gov2',
+      to: 'trans1',
+      distance: 2000,
+      type: 'secondary'
     }
   ]
 };

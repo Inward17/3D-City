@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { Location, Road, ZoneType, BuildingDesign } from '../types/city';
 import { localRepo } from '../lib/localRepo';
+import { clampDesignToNeighbours, isPlacementClear } from '../utils/buildingCollision';
+import { getEffectiveDimensions } from '../utils/buildingDimensions';
+import { dayOfYear as currentDayOfYear } from '../utils/solar';
+import type { CrossingStyle } from '../utils/roadCrossings';
 import * as THREE from 'three';
 import type { OrbitControls } from 'three-stdlib';
 
@@ -51,6 +55,18 @@ interface CityStore {
   setTimeOfDay: (time: number | ((prev: number) => number)) => void;
   weather: 'clear' | 'rain' | 'snow';
   setWeather: (weather: 'clear' | 'rain' | 'snow') => void;
+  /** Colour the roads by how much of their capacity is used. */
+  showCongestion: boolean;
+  setShowCongestion: (show: boolean) => void;
+  /**
+   * Site latitude, degrees north. Drives the sun's height and path, so it
+   * decides how long a shadow is and how long the day lasts.
+   */
+  latitude: number;
+  setLatitude: (latitude: number) => void;
+  /** Day of the year being studied, 1-366. */
+  dayOfYear: number;
+  setDayOfYear: (day: number) => void;
   /**
    * Multiplier on modelled traffic demand. 1 = the demand implied by the
    * buildings present; 0 clears the roads; 2 doubles it.
@@ -88,6 +104,12 @@ interface CityStore {
   /** Sectors the viewer is showing; new buildings adopt the first of these. */
   activeSectors: string[];
   setActiveSectors: (sectors: string[]) => void;
+  /** How each road crossing is resolved, keyed by crossingKey(). */
+  crossingStyles: Record<string, CrossingStyle>;
+  setCrossingStyle: (key: string, style: CrossingStyle) => void;
+  /** Crossing currently selected in the viewer, if any. */
+  selectedCrossing: string | null;
+  setSelectedCrossing: (key: string | null) => void;
   flyToLocation: (location: Location) => void;
   // Camera controls state
   cameraState: CameraState;
@@ -96,13 +118,16 @@ interface CityStore {
   registerCameraController: (controller: CameraController | null) => void;
   setCameraTransitioning: (isAnimating: boolean) => void;
   animateToPreset: (preset: CameraPreset) => void;
-  flyToCameraLocation: (position: [number, number, number]) => void;
+  flyToCameraLocation: (
+    position: [number, number, number],
+    offset?: [number, number, number]
+  ) => void;
 }
 
 export const useCityStore = create<CityStore>((set, get) => ({
   selectedLocation: null,
   setSelectedLocation: (location) => {
-    set({ selectedLocation: location });
+    set({ selectedLocation: location, selectedCrossing: location ? null : get().selectedCrossing });
     // Auto fly-to when selecting a location
     if (location) {
       get().flyToLocation(location);
@@ -118,6 +143,14 @@ export const useCityStore = create<CityStore>((set, get) => ({
   })),
   weather: 'clear',
   setWeather: (weather) => set({ weather }),
+  showCongestion: false,
+  setShowCongestion: (showCongestion) => set({ showCongestion }),
+  // Defaults match the project template's centre (Pune) until a project with
+  // real coordinates is opened.
+  latitude: 18.52,
+  setLatitude: (latitude) => set({ latitude: Math.max(-89, Math.min(89, latitude)) }),
+  dayOfYear: currentDayOfYear(new Date()),
+  setDayOfYear: (day) => set({ dayOfYear: Math.max(1, Math.min(366, Math.round(day))) }),
   trafficRate: 1,
   setTrafficRate: (rate) => set({ trafficRate: Math.max(0, Math.min(3, rate)) }),
   showGeoMap: false,
@@ -139,6 +172,23 @@ export const useCityStore = create<CityStore>((set, get) => ({
   currentProjectId: null,
   activeSectors: [],
   setActiveSectors: (sectors) => set({ activeSectors: sectors }),
+  crossingStyles: {},
+  selectedCrossing: null,
+  // Buildings and intersections share the same corner of the screen, so only
+  // one can be selected at a time.
+  setSelectedCrossing: (key) =>
+    set({ selectedCrossing: key, selectedLocation: key ? null : get().selectedLocation }),
+
+  setCrossingStyle: (key, style) => {
+    const { crossingStyles, currentProjectId } = get();
+    const next = { ...crossingStyles, [key]: style };
+    set({ crossingStyles: next });
+
+    if (!currentProjectId) return;
+    void localRepo
+      .setCrossingStyles(currentProjectId, next)
+      .catch(error => console.error('Failed to persist crossing style:', error));
+  },
 
   // Camera controls state
   cameraState: {
@@ -172,7 +222,21 @@ export const useCityStore = create<CityStore>((set, get) => ({
   },
 
   flyToLocation: (location) => {
-    get().flyToCameraLocation(location.position);
+    /*
+      Stand back far enough to see the whole building, and look at its middle
+      rather than the pavement it stands on. The old fixed [10, 10, 10] offset
+      put the camera inside anything bigger than a bungalow — selecting a tower
+      dropped you in its lobby.
+    */
+    const { width, depth, height } = getEffectiveDimensions(location);
+    const reach = Math.max(Math.hypot(width, depth), height);
+    const distance = reach * 1.4 + 15;
+    const [x, , z] = location.position;
+
+    get().flyToCameraLocation(
+      [x, height * 0.45, z],
+      [distance * 0.62, distance * 0.55, distance * 0.62]
+    );
   },
 
   animateToPreset: (newPreset: CameraPreset) => {
@@ -188,9 +252,12 @@ export const useCityStore = create<CityStore>((set, get) => ({
     cameraController?.animateToPreset(newPreset);
   },
 
-  flyToCameraLocation: (position: [number, number, number]) => {
+  flyToCameraLocation: (
+    position: [number, number, number],
+    offset?: [number, number, number]
+  ) => {
     const { cameraController } = get();
-    cameraController?.flyToLocation(position);
+    cameraController?.flyToLocation(position, offset);
   },
 
   fetchProjectData: async (
@@ -205,7 +272,16 @@ export const useCityStore = create<CityStore>((set, get) => ({
       const { locations, roads } = modelType && sectors
         ? await localRepo.ensureSectorLocations(projectId, modelType, sectors)
         : await localRepo.getCityData(projectId);
-      set({ locations, roads });
+      const crossingStyles = await localRepo.getCrossingStyles(projectId);
+      set({ locations, roads, crossingStyles, selectedCrossing: null });
+
+      /*
+        Adopt the site's real latitude, so the sun follows the path it takes
+        there. The project has stored coordinates since it was created; nothing
+        had ever read them.
+      */
+      const project = (await localRepo.listProjects()).find(p => p.id === projectId);
+      if (project?.center_lat != null) get().setLatitude(project.center_lat);
     } catch (error) {
       console.error('Error loading project data:', error);
     } finally {
@@ -216,6 +292,11 @@ export const useCityStore = create<CityStore>((set, get) => ({
   addBuilding: async (position: [number, number, number], name: string) => {
     const { buildingTypeToPlace, locations, currentProjectId, activeSectors } = get();
     if (!buildingTypeToPlace) return;
+
+    // Refuse to stack a building on an existing footprint. The placement ghost
+    // already shows this as invalid, but a click can still arrive (a fast
+    // double-click, or a caller that skipped the preview).
+    if (!isPlacementClear(position, buildingTypeToPlace, locations)) return;
 
     // The viewer only renders locations whose zone is in the active sector set,
     // so a zone-less building would be placed and then immediately filtered out
@@ -278,7 +359,20 @@ export const useCityStore = create<CityStore>((set, get) => ({
     const target = locations.find(l => l.id === locationId);
     if (!target) return;
 
-    const nextDesign = { ...target.design, ...design };
+    // Backstop against overlap. The editor already caps its sliders, but the
+    // store is the source of truth and must not be drivable into a state where
+    // two buildings occupy the same ground.
+    const fitted = clampDesignToNeighbours(target, locations, {
+      width: design.width,
+      depth: design.depth
+    });
+
+    const nextDesign = {
+      ...target.design,
+      ...design,
+      ...(design.width != null ? { width: fitted.width } : {}),
+      ...(design.depth != null ? { depth: fitted.depth } : {})
+    };
     const updated = { ...target, design: nextDesign };
 
     // Update state synchronously so the scene and the analytics respond as the

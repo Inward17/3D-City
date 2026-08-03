@@ -2,7 +2,8 @@ import { useRef, useMemo, useEffect } from 'react';
 import { useCityStore } from '../../store/cityStore';
 import { Location } from '../../types/city';
 import * as THREE from 'three';
-import { getEffectiveDimensions } from '../../utils/buildingDimensions';
+import { getEffectiveDimensions, hashUnit } from '../../utils/buildingDimensions';
+import { groundLevelFor } from '../../utils/terrain';
 
 interface InstancedWindowsProps {
   locations: Location[];
@@ -28,75 +29,85 @@ function generateWindowData(locations: Location[], timeOfDay: number): WindowDat
     // Effective dimensions, so windows follow any design edits (resized
     // footprint, changed floor count) rather than the type defaults.
     const dimensions = getEffectiveDimensions(location);
-    const drawnHeight = dimensions.height;
     const PLINTH = 0.8;
-    const rows = Math.max(1, Math.floor((drawnHeight - 4) / 4));
-    const cols = Math.floor(dimensions.width / 3);
+    const rows = Math.max(1, Math.floor((dimensions.height - 4) / 4));
+
+    /*
+      Columns are counted per face, from the wall that face actually runs along.
+      Both the sides and the front used to use the width: on any building whose
+      depth differed from its width, the side windows were laid out to the wrong
+      length and ran off the end of the wall into open air.
+    */
+    const columnsFor = (wallLength: number) => Math.max(1, Math.floor(wallLength / 3));
+    const acrossWidth = columnsFor(dimensions.width);
+    const acrossDepth = columnsFor(dimensions.depth);
+
+    /*
+      Windows are drawn in world space, but the building is drawn inside a group
+      standing on its platform. `position[1]` is always zero in the stored data,
+      so once buildings moved onto the terrain every window stayed at sea level
+      and hung beside its own facade.
+    */
+    const base = groundLevelFor(location) + PLINTH;
+
+    /** Offset of a column from the centre of a wall of `count` windows. */
+    const offset = (col: number, count: number) => (col - (count - 1) / 2) * 3;
+
+    let lightProbability = 0.3;
+    if (isNight) {
+      lightProbability = location.type === 'Hospital' ? 0.8 :
+        location.type === 'Hotel' ? 0.7 :
+          location.type === 'School' ? 0.2 : 0.5;
+    } else if (isBusinessHours) {
+      lightProbability = location.type === 'Building' ? 0.9 :
+        location.type === 'Hospital' ? 0.8 :
+          location.type === 'School' ? 0.9 : 0.6;
+    }
+
+    /*
+      Which windows are lit is decided by a hash of the building and the pane,
+      not by Math.random(). The whole set is regenerated whenever the clock
+      moves, so a random draw re-rolled every window on every tick of the time
+      slider and the facades flickered as it was dragged.
+    */
+    const lit = (face: number, row: number, col: number) =>
+      hashUnit(`${location.id}:${face}:${row}:${col}`) < lightProbability;
 
     for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        // Calculate lighting probability based on time and building type
-        let lightProbability = 0.3;
+      const y = base + row * 4 + 3;
 
-        if (isNight) {
-          lightProbability = location.type === 'Hospital' ? 0.8 :
-            location.type === 'Hotel' ? 0.7 :
-              location.type === 'School' ? 0.2 : 0.5;
-        } else if (isBusinessHours) {
-          lightProbability = location.type === 'Building' ? 0.9 :
-            location.type === 'Hospital' ? 0.8 :
-              location.type === 'School' ? 0.9 : 0.6;
+      // Front and back: along the width, offset by half the depth.
+      for (let col = 0; col < acrossWidth; col++) {
+        for (const [face, side] of [[0, 1], [1, -1]] as const) {
+          windows.push({
+            position: new THREE.Vector3(
+              location.position[0] + offset(col, acrossWidth),
+              y,
+              location.position[2] + side * (dimensions.depth / 2 + 0.1)
+            ),
+            scale: new THREE.Vector3(2, 3, 0.5),
+            isLit: lit(face, row, col),
+            buildingId: location.id
+          });
         }
+      }
 
-        const isLit = Math.random() < lightProbability;
-
-        // Front face windows
-        windows.push({
-          position: new THREE.Vector3(
-            location.position[0] + (col - (cols - 1) / 2) * 3,
-            location.position[1] + PLINTH + row * 4 + 3,
-            location.position[2] + dimensions.depth / 2 + 0.1
-          ),
-          scale: new THREE.Vector3(2, 3, 0.5),
-          isLit,
-          buildingId: location.id
-        });
-
-        // Back face windows
-        windows.push({
-          position: new THREE.Vector3(
-            location.position[0] + (col - (cols - 1) / 2) * 3,
-            location.position[1] + PLINTH + row * 4 + 3,
-            location.position[2] - dimensions.depth / 2 - 0.1
-          ),
-          scale: new THREE.Vector3(2, 3, 0.5),
-          isLit,
-          buildingId: location.id
-        });
-
-        // Side face windows (if building is wide enough)
-        if (dimensions.depth > 15) {
-          windows.push({
-            position: new THREE.Vector3(
-              location.position[0] + dimensions.width / 2 + 0.1,
-              location.position[1] + PLINTH + row * 4 + 3,
-              location.position[2] + (col - (cols - 1) / 2) * 3
-            ),
-            scale: new THREE.Vector3(0.5, 3, 2),
-            isLit,
-            buildingId: location.id
-          });
-
-          windows.push({
-            position: new THREE.Vector3(
-              location.position[0] - dimensions.width / 2 - 0.1,
-              location.position[1] + PLINTH + row * 4 + 3,
-              location.position[2] + (col - (cols - 1) / 2) * 3
-            ),
-            scale: new THREE.Vector3(0.5, 3, 2),
-            isLit,
-            buildingId: location.id
-          });
+      // Sides: along the depth, offset by half the width. Only worth drawing on
+      // a wall long enough to hold more than a single pane.
+      if (dimensions.depth > 15) {
+        for (let col = 0; col < acrossDepth; col++) {
+          for (const [face, side] of [[2, 1], [3, -1]] as const) {
+            windows.push({
+              position: new THREE.Vector3(
+                location.position[0] + side * (dimensions.width / 2 + 0.1),
+                y,
+                location.position[2] + offset(col, acrossDepth)
+              ),
+              scale: new THREE.Vector3(0.5, 3, 2),
+              isLit: lit(face, row, col),
+              buildingId: location.id
+            });
+          }
         }
       }
     }

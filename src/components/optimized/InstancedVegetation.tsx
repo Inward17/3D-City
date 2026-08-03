@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { useCityStore } from '../../store/cityStore';
 import { Location, Road } from '../../types/city';
 import * as THREE from 'three';
+import { elevationAt } from '../../utils/terrain';
 
 interface InstancedVegetationProps {
   locations: Location[];
@@ -300,7 +301,7 @@ export function InstancedVegetation({ locations, roads }: InstancedVegetationPro
             const z = location.position[2] + Math.sin(angle) * distance;
 
             if (!spatialGrid.isNearObstacle(x, z, 10)) {
-              positions.push(new THREE.Vector3(x, 0, z));
+              positions.push(new THREE.Vector3(x, elevationAt(x, z), z));
               scales.push(0.8 + Math.random() * 0.4);
               rotations.push(Math.random() * Math.PI * 2);
             }
@@ -315,7 +316,7 @@ export function InstancedVegetation({ locations, roads }: InstancedVegetationPro
         const z = (Math.random() - 0.5) * 1800;
 
         if (!spatialGrid.isNearObstacle(x, z, 30)) {
-          positions.push(new THREE.Vector3(x, 0, z));
+          positions.push(new THREE.Vector3(x, elevationAt(x, z), z));
           scales.push(0.6 + Math.random() * 0.4);
           rotations.push(Math.random() * Math.PI * 2);
         }

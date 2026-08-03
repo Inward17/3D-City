@@ -213,6 +213,75 @@ export const corporateCampusData: CityData = {
       to: 'sec2',
       distance: 2000,
       type: 'main'
+    },
+
+    /*
+      Perimeter road.
+
+      As with the city layout, every route ran through the main office building,
+      so a walk or a shuttle from the labs to the cafeteria had to cross the
+      centre of the campus. A perimeter loop is how campuses are actually laid
+      out — service and parking traffic keeps to the edge and the middle stays
+      quiet.
+    */
+    {
+      id: 'r12',
+      from: 'conf1',
+      to: 'rd1',
+      distance: 3000,
+      type: 'secondary'
+    },
+    {
+      id: 'r13',
+      from: 'rd1',
+      to: 'sec1',
+      distance: 1800,
+      type: 'secondary'
+    },
+    {
+      id: 'r14',
+      from: 'sec1',
+      to: 'cafe1',
+      distance: 1800,
+      type: 'secondary'
+    },
+    {
+      id: 'r15',
+      from: 'cafe1',
+      to: 'park1',
+      distance: 1600,
+      type: 'residential'
+    },
+    {
+      id: 'r16',
+      from: 'park1',
+      to: 'clinic1',
+      distance: 1600,
+      type: 'residential'
+    },
+    {
+      id: 'r17',
+      from: 'clinic1',
+      to: 'conf1',
+      distance: 3000,
+      type: 'secondary'
+    },
+
+    // HR & Finance had no road at all — isolated in the analytics and invisible
+    // to the traffic model.
+    {
+      id: 'r18',
+      from: 'admin1',
+      to: 'admin2',
+      distance: 600,
+      type: 'secondary'
+    },
+    {
+      id: 'r19',
+      from: 'admin2',
+      to: 'rd1',
+      distance: 1600,
+      type: 'secondary'
     }
   ]
 };

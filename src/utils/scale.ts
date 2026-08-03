@@ -32,6 +32,19 @@ export const ROAD_WIDTH = {
   residential: 6   // single lane plus passing space
 } as const;
 
+/**
+ * Free-flow speed by road class, in metres per second.
+ *
+ * Urban limits: 50 / 40 / 30 km/h. "Free-flow" means with no other traffic —
+ * nothing here yet models a vehicle slowing for the one in front, so these are
+ * the speeds actually driven. Congestion belongs to a later assignment step.
+ */
+export const FREE_FLOW_SPEED = {
+  main: 50 / 3.6,        // 13.9 m/s
+  secondary: 40 / 3.6,   // 11.1 m/s
+  residential: 30 / 3.6  //  8.3 m/s
+} as const;
+
 /** Height above ground that the road surface is drawn at, to avoid z-fighting. */
 export const ROAD_SURFACE_Y = 0.08;
 
